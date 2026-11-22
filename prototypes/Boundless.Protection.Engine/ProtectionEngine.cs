@@ -110,6 +110,8 @@ public sealed class ProtectionEngine
         var validation = ProtectionRequestValidation.Validate(request);
         if (validation != ProtectionFailureCode.None)
             return AuditResult(request, "apply", ProtectionOutcome.Failed, ProtectionState.Failed, validation);
+        if (!Enum.IsDefined(request.ProviderKind))
+            return AuditResult(request, "apply", ProtectionOutcome.Failed, ProtectionState.Failed, ProtectionFailureCode.InvalidRequest);
 
         var payloadFingerprint = ProtectionRequestValidation.ComputeFingerprint(request);
         var existing = _journal.Find(request.RequestId);
@@ -181,12 +183,21 @@ public sealed class ProtectionEngine
         }
 
         var appliedRules = mutation.AffectedRules.ToArray();
-        var nextState = StateForApply(mutation.Outcome);
+        var acceptedApplyOutcome = mutation.Outcome is ProtectionOutcome.Applied or ProtectionOutcome.Partial
+            or ProtectionOutcome.Conflict or ProtectionOutcome.ProviderUnavailable
+            or ProtectionOutcome.PermissionDenied or ProtectionOutcome.Failed;
+        var applyOutcome = acceptedApplyOutcome ? mutation.Outcome : ProtectionOutcome.Failed;
+        var applyFailure = acceptedApplyOutcome
+            ? mutation.FailureCode
+            : mutation.FailureCode == ProtectionFailureCode.None ? ProtectionFailureCode.RestoreFailure : mutation.FailureCode;
+        if (applyOutcome == ProtectionOutcome.Failed && applyFailure == ProtectionFailureCode.None)
+            applyFailure = ProtectionFailureCode.RestoreFailure;
+        var nextState = StateForApply(applyOutcome);
         var updated = applying with { AppliedRules = Array.AsReadOnly(appliedRules) };
-        updated = ProtectionStateMachine.Transition(updated, nextState, mutation.FailureCode);
+        updated = ProtectionStateMachine.Transition(updated, nextState, applyFailure);
         _journal.Update(updated);
 
-        return AuditResult(request, "apply", mutation.Outcome, updated.State, mutation.FailureCode,
+        return AuditResult(request, "apply", applyOutcome, updated.State, applyFailure,
             appliedRules.Length, ownerId: ownerId, policyFingerprint: baseline.Fingerprint);
     }
 
@@ -229,6 +240,23 @@ public sealed class ProtectionEngine
                 var failed = ProtectionStateMachine.Transition(restoring, state, mutation.FailureCode);
                 _journal.Update(failed);
                 return AuditResult(restoring, "restore", mutation.Outcome, failed.State, failed.LastFailure, mutation.AffectedRules.Count);
+            }
+
+            if (mutation.Outcome == ProtectionOutcome.Partial)
+            {
+                var failure = mutation.FailureCode == ProtectionFailureCode.None
+                    ? ProtectionFailureCode.RestoreFailure
+                    : mutation.FailureCode;
+                var partial = ProtectionStateMachine.Transition(restoring, ProtectionState.Partial, failure);
+                _journal.Update(partial);
+                return AuditResult(restoring, "restore", ProtectionOutcome.Partial, partial.State, failure, mutation.AffectedRules.Count);
+            }
+
+            if (mutation.Outcome is not (ProtectionOutcome.Restored or ProtectionOutcome.NoOp))
+            {
+                var failed = ProtectionStateMachine.Transition(restoring, ProtectionState.Failed, ProtectionFailureCode.RestoreFailure);
+                _journal.Update(failed);
+                return AuditResult(restoring, "restore", ProtectionOutcome.Failed, failed.State, failed.LastFailure, mutation.AffectedRules.Count);
             }
 
             var restored = ProtectionStateMachine.Transition(restoring, ProtectionState.Restored);
@@ -306,6 +334,10 @@ public sealed class ProtectionEngine
         if (results.Any(r => r.Outcome is ProtectionOutcome.PermissionDenied or ProtectionOutcome.Failed))
             return new ProtectionResult(ProtectionOutcome.Failed, ProtectionState.Failed,
                 results.First(r => r.Outcome is ProtectionOutcome.PermissionDenied or ProtectionOutcome.Failed).FailureCode,
+                results.Sum(r => r.AppliedRuleCount), results.Sum(r => r.RemovedRuleCount));
+        if (results.Any(r => r.Outcome == ProtectionOutcome.Partial))
+            return new ProtectionResult(ProtectionOutcome.Partial, ProtectionState.Partial,
+                results.First(r => r.Outcome == ProtectionOutcome.Partial).FailureCode,
                 results.Sum(r => r.AppliedRuleCount), results.Sum(r => r.RemovedRuleCount));
         if (results.Any(r => r.Outcome == ProtectionOutcome.Restored))
             return new ProtectionResult(ProtectionOutcome.Restored, ProtectionState.Restored, ProtectionFailureCode.None,

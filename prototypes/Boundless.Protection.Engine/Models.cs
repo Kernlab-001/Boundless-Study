@@ -131,12 +131,21 @@ public sealed record ProtectionResult(
     int AppliedRuleCount,
     int RemovedRuleCount,
     Guid? OwnerId = null,
-    string? PolicyFingerprint = null);
+    string? PolicyFingerprint = null)
+{
+    /// <summary>This milestone has no native enforcement provider; all results are simulations.</summary>
+    public bool IsSimulation => true;
+    public bool CanClaimProtection => false;
+}
 
 public sealed record ProviderMutationResult(
     ProtectionOutcome Outcome,
     ProtectionFailureCode FailureCode,
-    IReadOnlyList<ProtectionRule> AffectedRules);
+    IReadOnlyList<ProtectionRule> AffectedRules)
+{
+    public bool IsSimulation => true;
+    public bool CanClaimProtection => false;
+}
 
 public sealed record ProtectionAuditEvent(
     Guid RequestId,

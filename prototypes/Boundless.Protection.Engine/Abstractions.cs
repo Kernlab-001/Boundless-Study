@@ -34,6 +34,24 @@ public interface IProtectionAuditSink
     void Write(ProtectionAuditEvent entry);
 }
 
+internal static class ProtectionAuditValidation
+{
+    private static readonly HashSet<string> AllowedOperations = new(StringComparer.Ordinal)
+    {
+        "apply", "restore", "recover"
+    };
+
+    public static void Validate(ProtectionAuditEvent entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (entry.RequestId == Guid.Empty || entry.SessionId == Guid.Empty
+            || !Enum.IsDefined(entry.ProviderKind) || !Enum.IsDefined(entry.Outcome)
+            || !Enum.IsDefined(entry.FailureCode) || entry.AffectedRuleCount < 0
+            || !AllowedOperations.Contains(entry.Operation))
+            throw new ArgumentException("Audit event contains invalid or non-allowlisted fields.", nameof(entry));
+    }
+}
+
 public sealed class InMemoryProtectionAuditSink : IProtectionAuditSink
 {
     private readonly object _gate = new();
@@ -46,6 +64,7 @@ public sealed class InMemoryProtectionAuditSink : IProtectionAuditSink
 
     public void Write(ProtectionAuditEvent entry)
     {
+        ProtectionAuditValidation.Validate(entry);
         lock (_gate) _entries.Add(entry);
     }
 }

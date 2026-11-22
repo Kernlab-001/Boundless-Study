@@ -351,7 +351,7 @@ public sealed class SqliteProtectionAuditSink : IProtectionAuditSink
 
     public void Write(ProtectionAuditEvent entry)
     {
-        ArgumentNullException.ThrowIfNull(entry);
+        ProtectionAuditValidation.Validate(entry);
         using var connection = Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         using var command = connection.CreateCommand();

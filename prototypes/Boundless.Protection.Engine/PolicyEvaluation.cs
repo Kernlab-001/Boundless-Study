@@ -1,0 +1,340 @@
+using System.Globalization;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+
+namespace Boundless.Protection.Engine;
+
+/// <summary>Target categories evaluated as data only; this file performs no process or OS inspection.</summary>
+public enum PolicyTargetKind { Application, NetworkDestination }
+public enum PolicyRuleEffect { Allow, Deny, Exception }
+public enum PolicyDecision { Allow, Restrict, ExcludedProtectedTarget }
+public enum PolicyEvaluationStatus
+{
+    AllowedByRule,
+    RestrictedByRule,
+    AllowedByException,
+    ExcludedProtectedTarget,
+    InvalidRequest,
+    InactiveSession,
+    IdentityMismatch,
+    StaleProcessIdentity,
+    RestrictedByDefault
+}
+public enum NetworkProtocol { Any, Tcp, Udp }
+
+/// <summary>A canonical application or network target. Only values supplied by the caller are examined.</summary>
+public sealed record PolicyTarget(
+    PolicyTargetKind Kind,
+    string? ExecutablePath = null,
+    string? Sha256 = null,
+    string? Host = null,
+    int? Port = null,
+    NetworkProtocol Protocol = NetworkProtocol.Any)
+{
+    public static PolicyTarget Application(string executablePath, string sha256) =>
+        new(PolicyTargetKind.Application, ExecutablePath: executablePath, Sha256: sha256);
+
+    public static PolicyTarget Network(string host, int? port = null, NetworkProtocol protocol = NetworkProtocol.Any) =>
+        new(PolicyTargetKind.NetworkDestination, Host: host, Port: port, Protocol: protocol);
+
+    public bool IsValid => Kind switch
+    {
+        PolicyTargetKind.Application => IsWindowsPath(ExecutablePath) && IsSha256(Sha256)
+            && Host is null && Port is null && Protocol == NetworkProtocol.Any,
+        PolicyTargetKind.NetworkDestination => IsValidHost(Host) && (Port is null or >= 1 and <= 65535)
+            && ExecutablePath is null && Sha256 is null && Enum.IsDefined(Protocol),
+        _ => false
+    };
+
+    public string CanonicalKey => Kind switch
+    {
+        PolicyTargetKind.Application => $"app:{CanonicalWindowsPath(ExecutablePath!)}:{Sha256!.ToUpperInvariant()}",
+        PolicyTargetKind.NetworkDestination => $"net:{CanonicalHost(Host!)}:{Port?.ToString(CultureInfo.InvariantCulture) ?? "*"}:{Protocol}",
+        _ => string.Empty
+    };
+
+    internal static string CanonicalWindowsPath(string path)
+    {
+        var normalized = path.Trim().Replace('/', '\\');
+        string root;
+        string remainder;
+        if (Regex.IsMatch(normalized, @"^[A-Za-z]:\\"))
+        {
+            root = normalized[..3].ToUpperInvariant();
+            remainder = normalized[3..];
+        }
+        else
+        {
+            var pieces = normalized.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries);
+            if (pieces.Length < 2) return normalized.ToUpperInvariant();
+            root = $"\\\\{pieces[0]}\\{pieces[1]}\\".ToUpperInvariant();
+            remainder = string.Join('\\', pieces.Skip(2));
+        }
+
+        var segments = new List<string>();
+        foreach (var segment in remainder.Split('\\', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == ".") continue;
+            if (segment == "..")
+            {
+                if (segments.Count > 0) segments.RemoveAt(segments.Count - 1);
+                continue;
+            }
+            segments.Add(segment);
+        }
+        return (root + string.Join('\\', segments)).ToUpperInvariant();
+    }
+
+    private static bool IsWindowsPath(string? path) => !string.IsNullOrWhiteSpace(path)
+        && !path.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase)
+        && !path.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase)
+        && !path.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase)
+        && (Regex.IsMatch(path, @"^[A-Za-z]:\\") || path.StartsWith(@"\\", StringComparison.Ordinal));
+
+    private static bool IsSha256(string? hash) => hash is not null && Regex.IsMatch(hash, "^[A-Fa-f0-9]{64}$");
+
+    private static bool IsValidHost(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host) || host.Contains('/') || host.Contains('\\') || host.Contains('@')) return false;
+        if (IPAddress.TryParse(host, out _)) return true;
+        try
+        {
+            var ascii = new IdnMapping().GetAscii(host.Trim().TrimEnd('.'));
+            return ascii.Length is > 0 and <= 253
+                && ascii.Split('.').All(label => label.Length is > 0 and <= 63
+                    && Regex.IsMatch(label, @"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$"));
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static string CanonicalHost(string host)
+    {
+        var trimmed = host.Trim().TrimEnd('.');
+        return IPAddress.TryParse(trimmed, out var address)
+            ? address.ToString().ToUpperInvariant()
+            : new IdnMapping().GetAscii(trimmed).ToLowerInvariant();
+    }
+}
+
+/// <summary>Immutable, caller-captured process identity evidence; no PID lookup occurs in the evaluator.</summary>
+public sealed record ProcessIdentitySnapshot(
+    int ProcessId,
+    DateTimeOffset ProcessStartUtc,
+    DateTimeOffset CapturedAtUtc,
+    string SubjectSid,
+    string ExecutablePath,
+    string ExecutableSha256);
+
+public sealed record ProtectionSessionContext(
+    Guid SessionId,
+    long Generation,
+    string SubjectSid,
+    DateTimeOffset StartsAtUtc,
+    DateTimeOffset ExpiresAtUtc,
+    bool IsActive);
+
+public sealed record EvaluationRule(
+    Guid RuleId,
+    string SubjectSid,
+    PolicyTarget Target,
+    PolicyRuleEffect Effect,
+    int Priority = 0,
+    bool IsEnabled = true,
+    Guid SessionId = default,
+    long SessionGeneration = 0);
+
+public sealed record PolicyEvaluationRequest(
+    ProtectionSessionContext Session,
+    ProcessIdentitySnapshot Process,
+    PolicyTarget Target,
+    DateTimeOffset EvaluatedAtUtc);
+
+public sealed record PolicyEvaluationResult(
+    PolicyDecision Decision,
+    PolicyEvaluationStatus Status,
+    bool FailClosed,
+    Guid? MatchedRuleId = null,
+    string ReasonCode = "")
+{
+    /// <summary>The result describes a simulated decision only, never active OS enforcement.</summary>
+    public bool IsSimulation => true;
+    public bool CanClaimProtection => false;
+}
+
+/// <summary>
+/// Catalog supplied by the host product's policy author. No filesystem or platform
+/// discovery is performed. Paths use lexical dot-segment normalization only; filesystem
+/// aliases such as junctions, symlinks, and 8.3 names are not resolved here.
+/// </summary>
+public sealed class ProtectedTargetCatalog
+{
+    private static readonly string[] AccessibilityExecutables =
+    [
+        "Narrator.exe", "osk.exe", "magnify.exe", "utilman.exe", "sethc.exe"
+    ];
+
+    private static readonly string[] CoreSystemExecutables =
+    [
+        "csrss.exe", "lsass.exe", "services.exe", "smss.exe", "svchost.exe",
+        "wininit.exe", "winlogon.exe", "dwm.exe", "explorer.exe", "taskmgr.exe"
+    ];
+
+    private readonly HashSet<string> _applicationPaths;
+    private readonly HashSet<string> _networkKeys;
+
+    public ProtectedTargetCatalog(IEnumerable<string>? additionalApplicationPaths = null, IEnumerable<PolicyTarget>? additionalNetworkTargets = null)
+    {
+        _applicationPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _networkKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (additionalApplicationPaths is not null)
+            foreach (var path in additionalApplicationPaths)
+            {
+                if (string.IsNullOrWhiteSpace(path) || !(Regex.IsMatch(path, @"^[A-Za-z]:\\") || path.StartsWith(@"\\", StringComparison.Ordinal)))
+                    throw new ArgumentException("Protected application paths must be absolute Windows paths.", nameof(additionalApplicationPaths));
+                _applicationPaths.Add(PolicyTarget.CanonicalWindowsPath(path));
+            }
+        if (additionalNetworkTargets is not null)
+            foreach (var target in additionalNetworkTargets)
+            {
+                if (target is null || !target.IsValid || target.Kind != PolicyTargetKind.NetworkDestination)
+                    throw new ArgumentException("Protected network targets must be valid network destinations.", nameof(additionalNetworkTargets));
+                _networkKeys.Add(target.CanonicalKey);
+            }
+    }
+
+    public static ProtectedTargetCatalog ForWindowsDirectory(string windowsDirectory, IEnumerable<string>? additionalApplicationPaths = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(windowsDirectory);
+        var root = PolicyTarget.CanonicalWindowsPath(windowsDirectory).TrimEnd('\\');
+        if (!(Regex.IsMatch(windowsDirectory, @"^[A-Za-z]:\\") || windowsDirectory.StartsWith(@"\\", StringComparison.Ordinal)))
+            throw new ArgumentException("Windows directory must be an absolute Windows path.", nameof(windowsDirectory));
+
+        // Include common lexical aliases used by 32-bit callers. Reparse points,
+        // 8.3 names, and arbitrary junction aliases remain unresolved without OS IO.
+        var paths = AccessibilityExecutables.Concat(CoreSystemExecutables)
+            .SelectMany(name => new[]
+            {
+                $"{root}\\System32\\{name}",
+                $"{root}\\SysWOW64\\{name}",
+                $"{root}\\Sysnative\\{name}"
+            })
+            .Concat(additionalApplicationPaths ?? []);
+        return new ProtectedTargetCatalog(paths);
+    }
+
+    public bool IsProtected(PolicyTarget target) => target.Kind switch
+    {
+        PolicyTargetKind.Application => _applicationPaths.Contains(PolicyTarget.CanonicalWindowsPath(target.ExecutablePath!)),
+        PolicyTargetKind.NetworkDestination => _networkKeys.Contains(target.CanonicalKey),
+        _ => false
+    };
+}
+
+/// <summary>
+/// Pure deterministic policy evaluation. Session and process evidence is caller-supplied
+/// and untrusted; this type does not authenticate a SID, PID, image, or live OS process.
+/// It computes a decision only and never claims operating-system enforcement.
+/// </summary>
+public sealed class ProtectionPolicyEvaluator
+{
+    private static readonly Regex SidPattern = new(@"^S-1-(?:\d+-){1,14}\d+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private readonly ProtectedTargetCatalog _protectedTargets;
+    private readonly TimeSpan _maximumIdentityAge;
+
+    public ProtectionPolicyEvaluator(ProtectedTargetCatalog protectedTargets, TimeSpan? maximumIdentityAge = null)
+    {
+        _protectedTargets = protectedTargets ?? throw new ArgumentNullException(nameof(protectedTargets));
+        _maximumIdentityAge = maximumIdentityAge ?? TimeSpan.FromSeconds(30);
+        if (_maximumIdentityAge <= TimeSpan.Zero || _maximumIdentityAge > TimeSpan.FromMinutes(5))
+            throw new ArgumentOutOfRangeException(nameof(maximumIdentityAge), "Identity freshness must be between zero and five minutes.");
+    }
+
+    public PolicyEvaluationResult Evaluate(PolicyEvaluationRequest request, IEnumerable<EvaluationRule>? rules)
+    {
+        if (rules is null || request is null || request.Session is null || request.Process is null || request.Target is null
+            || !request.Target.IsValid || !Enum.IsDefined(request.Target.Kind)
+            || request.EvaluatedAtUtc.Offset != TimeSpan.Zero)
+            return Closed(PolicyEvaluationStatus.InvalidRequest, "invalid-request");
+
+        var session = request.Session;
+        if (session.SessionId == Guid.Empty || session.Generation <= 0 || !ValidSid(session.SubjectSid)
+            || session.StartsAtUtc.Offset != TimeSpan.Zero || session.ExpiresAtUtc.Offset != TimeSpan.Zero
+            || session.StartsAtUtc >= session.ExpiresAtUtc || !session.IsActive
+            || request.EvaluatedAtUtc < session.StartsAtUtc || request.EvaluatedAtUtc >= session.ExpiresAtUtc)
+            return Closed(PolicyEvaluationStatus.InactiveSession, "session-inactive-or-invalid");
+
+        var process = request.Process;
+        if (process.ProcessId <= 0 || !ValidSid(process.SubjectSid) || process.ProcessStartUtc.Offset != TimeSpan.Zero
+            || process.CapturedAtUtc.Offset != TimeSpan.Zero || process.ProcessStartUtc > process.CapturedAtUtc
+            || !PolicyTarget.Application(process.ExecutablePath, process.ExecutableSha256).IsValid)
+            return Closed(PolicyEvaluationStatus.InvalidRequest, "invalid-process-identity");
+        if (!string.Equals(process.SubjectSid, session.SubjectSid, StringComparison.Ordinal))
+            return Closed(PolicyEvaluationStatus.IdentityMismatch, "user-scope-mismatch");
+        var identityAge = request.EvaluatedAtUtc - process.CapturedAtUtc;
+        if (identityAge < TimeSpan.Zero || identityAge > _maximumIdentityAge || process.ProcessStartUtc > request.EvaluatedAtUtc)
+            return Closed(PolicyEvaluationStatus.StaleProcessIdentity, "process-identity-stale");
+
+        var processTarget = PolicyTarget.Application(process.ExecutablePath, process.ExecutableSha256);
+        if (request.Target.Kind == PolicyTargetKind.Application
+            && !string.Equals(processTarget.CanonicalKey, request.Target.CanonicalKey, StringComparison.Ordinal))
+            return Closed(PolicyEvaluationStatus.IdentityMismatch, "target-process-identity-mismatch");
+        if (_protectedTargets.IsProtected(processTarget) || _protectedTargets.IsProtected(request.Target))
+            return new PolicyEvaluationResult(PolicyDecision.ExcludedProtectedTarget,
+                PolicyEvaluationStatus.ExcludedProtectedTarget, false, ReasonCode: "protected-target-exclusion");
+
+        EvaluationRule[] enabledRules;
+        try
+        {
+            var allRules = rules.ToArray();
+            if (allRules.Any(rule => rule is null))
+                return Closed(PolicyEvaluationStatus.InvalidRequest, "null-policy-rule");
+            enabledRules = allRules.Where(rule => rule is not null && rule.IsEnabled).ToArray();
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException
+            and not StackOverflowException and not AccessViolationException)
+        {
+            return Closed(PolicyEvaluationStatus.InvalidRequest, "invalid-policy-data");
+        }
+
+        if (enabledRules.Any(rule => rule.RuleId == Guid.Empty || !ValidSid(rule.SubjectSid)
+            || rule.Target is null || !rule.Target.IsValid || !Enum.IsDefined(rule.Effect)
+            || rule.SessionId == Guid.Empty || rule.SessionGeneration <= 0))
+            return Closed(PolicyEvaluationStatus.InvalidRequest, "malformed-enabled-policy-rule");
+
+        var applicable = enabledRules.Where(rule => rule.SessionId == session.SessionId
+                && rule.SessionGeneration == session.Generation
+                && string.Equals(rule.SubjectSid, session.SubjectSid, StringComparison.Ordinal)
+                && string.Equals(rule.Target.CanonicalKey, request.Target.CanonicalKey, StringComparison.Ordinal))
+            .ToArray();
+
+        // Precedence is explicit and stable: exception > deny > allow > default restrict.
+        // Priority breaks ties within an effect; RuleId provides deterministic final ordering.
+        var matched = applicable
+            .OrderBy(rule => EffectRank(rule.Effect))
+            .ThenByDescending(rule => rule.Priority)
+            .ThenBy(rule => rule.RuleId)
+            .FirstOrDefault();
+
+        return matched?.Effect switch
+        {
+            PolicyRuleEffect.Exception => new PolicyEvaluationResult(PolicyDecision.Allow, PolicyEvaluationStatus.AllowedByException, false, matched.RuleId, "exception-overrides-restriction"),
+            PolicyRuleEffect.Allow => new PolicyEvaluationResult(PolicyDecision.Allow, PolicyEvaluationStatus.AllowedByRule, false, matched.RuleId, "explicit-allow"),
+            PolicyRuleEffect.Deny => new PolicyEvaluationResult(PolicyDecision.Restrict, PolicyEvaluationStatus.RestrictedByRule, true, matched.RuleId, "explicit-deny"),
+            _ => new PolicyEvaluationResult(PolicyDecision.Restrict, PolicyEvaluationStatus.RestrictedByDefault, true, ReasonCode: "no-matching-rule-fail-closed")
+        };
+    }
+
+    private static int EffectRank(PolicyRuleEffect effect) => effect switch
+    {
+        PolicyRuleEffect.Exception => 0,
+        PolicyRuleEffect.Deny => 1,
+        PolicyRuleEffect.Allow => 2,
+        _ => int.MaxValue
+    };
+
+    private static bool ValidSid(string? sid) => sid is not null && SidPattern.IsMatch(sid);
+
+    private static PolicyEvaluationResult Closed(PolicyEvaluationStatus status, string reason) =>
+        new(PolicyDecision.Restrict, status, true, ReasonCode: reason);
+}
