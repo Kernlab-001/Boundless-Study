@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace Boundless.Protection.Engine;
@@ -76,6 +77,12 @@ public sealed record ProtectionRequest(
 public sealed record PolicySnapshot
 {
     public PolicySnapshot(ProtectionProviderKind providerKind, long version, IEnumerable<ProtectionRule> rules)
+        : this(providerKind, version, rules.ToArray())
+    {
+    }
+
+    [JsonConstructor]
+    public PolicySnapshot(ProtectionProviderKind providerKind, long version, IReadOnlyList<ProtectionRule> rules)
     {
         ProviderKind = providerKind;
         Version = version;

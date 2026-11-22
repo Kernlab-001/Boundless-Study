@@ -20,6 +20,15 @@ public interface IProtectionJournal
     IReadOnlyList<ProtectionOperationRecord> All();
 }
 
+/// <summary>
+/// Optional process-wide operation gate for durable journals. Implementations must
+/// release the lock when the owning process exits and bound acquisition time.
+/// </summary>
+public interface IProtectionCrossProcessLock
+{
+    IDisposable AcquireOperationLock(CancellationToken cancellationToken = default);
+}
+
 public interface IProtectionAuditSink
 {
     void Write(ProtectionAuditEvent entry);

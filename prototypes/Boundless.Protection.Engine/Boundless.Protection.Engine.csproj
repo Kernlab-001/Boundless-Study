@@ -4,4 +4,7 @@
     <RootNamespace>Boundless.Protection.Engine</RootNamespace>
     <AssemblyName>Boundless.Protection.Engine</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+  </ItemGroup>
 </Project>

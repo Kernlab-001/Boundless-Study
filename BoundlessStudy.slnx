@@ -15,4 +15,9 @@
     <Project Path="tests/BoundlessStudy.Domain.Tests/BoundlessStudy.Domain.Tests.csproj" />
     <Project Path="tests/BoundlessStudy.Infrastructure.Tests/BoundlessStudy.Infrastructure.Tests.csproj" />
   </Folder>
+  <Folder Name="/prototypes/">
+    <Project Path="prototypes/Boundless.Protection.Engine/Boundless.Protection.Engine.csproj" />
+    <Project Path="prototypes/Boundless.Protection.Engine.Tests/Boundless.Protection.Engine.Tests.csproj" />
+    <Project Path="prototypes/Boundless.Protection.Engine.CrashWorker/Boundless.Protection.Engine.CrashWorker.csproj" />
+  </Folder>
 </Solution>

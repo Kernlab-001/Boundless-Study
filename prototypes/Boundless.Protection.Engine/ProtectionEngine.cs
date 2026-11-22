@@ -38,6 +38,7 @@ public sealed class ProtectionEngine
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            using var processLock = (_journal as IProtectionCrossProcessLock)?.AcquireOperationLock(cancellationToken);
             return await ApplyCoreAsync(request, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -54,6 +55,7 @@ public sealed class ProtectionEngine
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            using var processLock = (_journal as IProtectionCrossProcessLock)?.AcquireOperationLock(cancellationToken);
             var records = _journal.ForSession(sessionId, providerKind);
             if (records.Count == 0 || records.All(r => r.State == ProtectionState.Restored))
                 return Result(ProtectionOutcome.NoOp, ProtectionState.Restored, ProtectionFailureCode.None);
@@ -88,6 +90,7 @@ public sealed class ProtectionEngine
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            using var processLock = (_journal as IProtectionCrossProcessLock)?.AcquireOperationLock(cancellationToken);
             var results = new List<ProtectionResult>();
             foreach (var record in _journal.Recoverable())
             {
