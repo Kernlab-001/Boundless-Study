@@ -19,6 +19,9 @@ public enum PolicyEvaluationStatus
     InactiveSession,
     IdentityMismatch,
     StaleProcessIdentity,
+    IdentityUnavailable,
+    IdentityUnsupported,
+    IdentityRejected,
     RestrictedByDefault
 }
 public enum NetworkProtocol { Any, Tcp, Udp }
@@ -251,6 +254,118 @@ public sealed class ProtectionPolicyEvaluator
         if (_maximumIdentityAge <= TimeSpan.Zero || _maximumIdentityAge > TimeSpan.FromMinutes(5))
             throw new ArgumentOutOfRangeException(nameof(maximumIdentityAge), "Identity freshness must be between zero and five minutes.");
     }
+
+    /// <summary>
+    /// Authorization entry point for future trusted identity verification. This build
+    /// deliberately has no OS-backed verifier, so every request fails closed with an
+    /// explicit unavailable result. Caller-supplied claims are never promoted to
+    /// verified evidence. Use <see cref="Evaluate"/> only for simulation.
+    /// </summary>
+    public Task<PolicyEvaluationResult> EvaluateAuthorizedAsync(
+        CallerSessionIdentityClaims sessionClaims,
+        CallerProcessIdentityClaims processClaims,
+        PolicyTarget target,
+        DateTimeOffset evaluatedAtUtc,
+        IEnumerable<EvaluationRule>? rules,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(sessionClaims);
+        ArgumentNullException.ThrowIfNull(processClaims);
+        return Task.FromResult(IdentityUnavailable("trusted-identity-verifier-unavailable"));
+    }
+
+    /// <summary>
+    /// Trusted-verifier path reserved to this assembly. The verifier interface and
+    /// evidence constructors are internal so external callers cannot claim the OS
+    /// verified source flag or mint evidence. There is no implementation in BPE-1.6.1.
+    /// </summary>
+    internal async Task<PolicyEvaluationResult> EvaluateAuthorizedAsync(
+        IIdentityBoundaryVerifier? verifier,
+        CallerSessionIdentityClaims sessionClaims,
+        CallerProcessIdentityClaims processClaims,
+        PolicyTarget target,
+        DateTimeOffset evaluatedAtUtc,
+        IEnumerable<EvaluationRule>? rules,
+        CancellationToken cancellationToken = default)
+    {
+        if (verifier is null) return IdentityUnavailable("trusted-identity-verifier-unavailable");
+        if (verifier.SourceTrust != IdentityEvidenceSourceTrust.OperatingSystemVerified)
+            return Closed(PolicyEvaluationStatus.IdentityUnsupported, "verifier-source-not-trusted");
+
+        var sessionResult = await verifier.VerifySessionAsync(sessionClaims, cancellationToken).ConfigureAwait(false);
+        if (sessionResult.Status != IdentityVerificationStatus.Verified)
+            return FromVerificationFailure(sessionResult.Status, sessionResult.ReasonCode);
+        if (!IdentityTrustBoundary.IsTrustedSession(verifier, sessionResult)
+            || !SessionEvidenceMatchesClaims(sessionResult.Evidence!, sessionClaims, evaluatedAtUtc))
+            return Closed(PolicyEvaluationStatus.IdentityRejected, "verified-session-does-not-match-claims");
+
+        var processResult = await verifier.VerifyProcessAsync(processClaims, sessionResult.Evidence!, cancellationToken).ConfigureAwait(false);
+        if (processResult.Status != IdentityVerificationStatus.Verified)
+            return FromVerificationFailure(processResult.Status, processResult.ReasonCode);
+        if (!IdentityTrustBoundary.IsTrustedProcess(verifier, processResult, sessionResult.Evidence)
+            || !ProcessEvidenceMatchesClaims(processResult.Evidence!, processClaims, evaluatedAtUtc))
+            return Closed(PolicyEvaluationStatus.IdentityRejected, "verified-process-does-not-match-claims");
+
+        var session = sessionResult.Evidence!;
+        var process = processResult.Evidence!;
+        var request = new PolicyEvaluationRequest(
+            new ProtectionSessionContext(session.SessionId, session.Generation, session.SubjectSid,
+                session.StartsAtUtc, session.ExpiresAtUtc, true),
+            new ProcessIdentitySnapshot(process.ProcessId, process.ProcessStartUtc, process.ObservedAtUtc,
+                process.SubjectSid, process.ExecutablePath, process.ExecutableSha256),
+            target,
+            evaluatedAtUtc);
+        return Evaluate(request, rules);
+    }
+
+    private bool SessionEvidenceMatchesClaims(
+        VerifiedSessionIdentity evidence,
+        CallerSessionIdentityClaims claims,
+        DateTimeOffset evaluatedAtUtc) =>
+        evidence.SessionId != Guid.Empty
+        && evidence.Generation > 0
+        && string.Equals(evidence.SubjectSid, claims.SubjectSid, StringComparison.Ordinal)
+        && evidence.SessionId == claims.SessionId
+        && evidence.Generation == claims.SessionGeneration
+        && (claims.AuthenticationContext is null
+            || string.Equals(evidence.AuthenticationContext, claims.AuthenticationContext, StringComparison.Ordinal))
+        && !string.IsNullOrWhiteSpace(evidence.AuthenticationContext)
+        && evidence.AuthenticatedAtUtc.Offset == TimeSpan.Zero
+        && evidence.StartsAtUtc.Offset == TimeSpan.Zero
+        && evidence.ExpiresAtUtc.Offset == TimeSpan.Zero
+        && evidence.StartsAtUtc < evidence.ExpiresAtUtc
+        && evidence.AuthenticatedAtUtc <= evaluatedAtUtc
+        && evaluatedAtUtc >= evidence.StartsAtUtc
+        && evaluatedAtUtc < evidence.ExpiresAtUtc;
+
+    private bool ProcessEvidenceMatchesClaims(
+        VerifiedProcessIdentity evidence,
+        CallerProcessIdentityClaims claims,
+        DateTimeOffset evaluatedAtUtc)
+    {
+        if (evidence.ProcessId <= 0 || evidence.ProcessId != claims.ProcessId
+            || evidence.ProcessStartUtc != claims.ProcessStartUtc
+            || !string.Equals(evidence.SubjectSid, claims.SubjectSid, StringComparison.Ordinal)
+            || evidence.ProcessStartUtc.Offset != TimeSpan.Zero || evidence.ObservedAtUtc.Offset != TimeSpan.Zero
+            || evidence.ProcessStartUtc > evidence.ObservedAtUtc || evidence.ObservedAtUtc > evaluatedAtUtc)
+            return false;
+        if (evaluatedAtUtc - evidence.ObservedAtUtc > _maximumIdentityAge) return false;
+        var verifiedTarget = PolicyTarget.Application(evidence.ExecutablePath, evidence.ExecutableSha256);
+        var claimedTarget = PolicyTarget.Application(claims.ExecutablePath, claims.ExecutableSha256);
+        return verifiedTarget.IsValid && claimedTarget.IsValid
+            && string.Equals(verifiedTarget.CanonicalKey, claimedTarget.CanonicalKey, StringComparison.Ordinal);
+    }
+
+    private static PolicyEvaluationResult FromVerificationFailure(IdentityVerificationStatus status, string reasonCode) => status switch
+    {
+        IdentityVerificationStatus.Unavailable => IdentityUnavailable(reasonCode),
+        IdentityVerificationStatus.Unsupported => Closed(PolicyEvaluationStatus.IdentityUnsupported, reasonCode),
+        _ => Closed(PolicyEvaluationStatus.IdentityRejected, reasonCode)
+    };
+
+    private static PolicyEvaluationResult IdentityUnavailable(string reason) =>
+        Closed(PolicyEvaluationStatus.IdentityUnavailable, reason);
 
     public PolicyEvaluationResult Evaluate(PolicyEvaluationRequest request, IEnumerable<EvaluationRule>? rules)
     {

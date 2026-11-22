@@ -50,13 +50,17 @@ public sealed class VerifiedSessionIdentity
         long generation,
         string subjectSid,
         string authenticationContext,
-        DateTimeOffset authenticatedAtUtc)
+        DateTimeOffset authenticatedAtUtc,
+        DateTimeOffset startsAtUtc,
+        DateTimeOffset expiresAtUtc)
     {
         SessionId = sessionId;
         Generation = generation;
         SubjectSid = subjectSid;
         AuthenticationContext = authenticationContext;
         AuthenticatedAtUtc = authenticatedAtUtc;
+        StartsAtUtc = startsAtUtc;
+        ExpiresAtUtc = expiresAtUtc;
     }
 
     public Guid SessionId { get; }
@@ -64,6 +68,8 @@ public sealed class VerifiedSessionIdentity
     public string SubjectSid { get; }
     public string AuthenticationContext { get; }
     public DateTimeOffset AuthenticatedAtUtc { get; }
+    public DateTimeOffset StartsAtUtc { get; }
+    public DateTimeOffset ExpiresAtUtc { get; }
 }
 
 /// <summary>
@@ -163,9 +169,10 @@ public sealed class IdentityVerificationResult<TEvidence> where TEvidence : clas
 /// This is a specification-only interface: verified evidence issuance is internal,
 /// so any future implementation must remain within this assembly or use a separately
 /// reviewed, controlled evidence-issuance boundary. This verifier is not wired into
-/// ProtectionPolicyEvaluator in this milestone.
+/// the public authorization entry point in this milestone; that entry point returns
+/// IdentityUnavailable until an in-assembly trusted verifier is implemented.
 /// </summary>
-public interface IIdentityBoundaryVerifier
+internal interface IIdentityBoundaryVerifier
 {
     IdentityEvidenceSourceTrust SourceTrust { get; }
 
@@ -183,7 +190,7 @@ public interface IIdentityBoundaryVerifier
 /// Shared trust gate for consumers. It intentionally rejects simulated sources,
 /// incomplete results, and mismatched session generations/SIDs.
 /// </summary>
-public static class IdentityTrustBoundary
+internal static class IdentityTrustBoundary
 {
     public static bool IsTrustedSession(
         IIdentityBoundaryVerifier verifier,

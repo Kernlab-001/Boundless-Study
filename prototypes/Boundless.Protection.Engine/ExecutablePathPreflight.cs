@@ -35,7 +35,7 @@ public static class ExecutablePathPreflight
     private static readonly Regex DriveRootedPath = new(@"^[A-Za-z]:\\", RegexOptions.CultureInvariant);
     private static readonly Regex ShortNameCandidate = new(@"~[1-9][0-9]*(?:\.|$)", RegexOptions.CultureInvariant);
     private static readonly Regex ReservedDeviceName = new(
-        @"^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9]|LPT[1-9])(?:\..*)?$",
+        @"^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM(?:[1-9]|[\u00B9\u00B2\u00B3])|LPT(?:[1-9]|[\u00B9\u00B2\u00B3]))(?:\..*)?$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public static ExecutablePathPreflightResult Inspect(string? path)
@@ -59,10 +59,14 @@ public static class ExecutablePathPreflight
 
         foreach (var segment in segments)
         {
-            if (segment.EndsWith(' ') || segment.EndsWith('.'))
+            if (char.IsWhiteSpace(segment[^1]) || segment.EndsWith('.'))
                 return Result(ExecutablePathPreflightStatus.AmbiguousAlias, "trailing-space-or-dot-alias");
             if (segment.Contains(':'))
                 return Result(ExecutablePathPreflightStatus.AmbiguousAlias, "alternate-data-stream-or-colon-alias");
+            if (segment.Any(character => char.IsControl(character) || character is '<' or '>' or '"' or '|' or '?' or '*'))
+                return Result(ExecutablePathPreflightStatus.Invalid, "invalid-windows-path-character");
+            if (segment.Contains(" .", StringComparison.Ordinal))
+                return Result(ExecutablePathPreflightStatus.AmbiguousAlias, "space-before-extension-alias");
             if (ShortNameCandidate.IsMatch(segment))
                 return Result(ExecutablePathPreflightStatus.AmbiguousAlias, "short-name-candidate");
             var baseName = segment.Split('.')[0];

@@ -13,8 +13,9 @@ public sealed class IdentityTrustBoundaryTests
 
         Assert.Equal("S-1-5-21-1-2-3-1001", sessionClaims.SubjectSid);
         Assert.Equal(42, processClaims.ProcessId);
-        Assert.False(IdentityTrustBoundary.IsTrustedSession(new SimulatedVerifier(),
-            IdentityVerificationResult<VerifiedSessionIdentity>.Simulated("synthetic-claims")));
+        var result = IdentityVerificationResult<VerifiedSessionIdentity>.Simulated("synthetic-claims");
+        Assert.False(result.IsTrusted);
+        Assert.Equal(IdentityEvidenceSourceTrust.SimulatedUntrusted, result.SourceTrust);
     }
 
     [Fact]
@@ -25,8 +26,8 @@ public sealed class IdentityTrustBoundaryTests
 
         Assert.False(session.IsTrusted);
         Assert.False(process.IsTrusted);
-        Assert.False(IdentityTrustBoundary.IsTrustedSession(new SimulatedVerifier(), session));
-        Assert.False(IdentityTrustBoundary.IsTrustedProcess(new SimulatedVerifier(), process, null));
+        Assert.Equal(IdentityVerificationStatus.Rejected, session.Status);
+        Assert.Equal(IdentityVerificationStatus.Rejected, process.Status);
     }
 
     [Fact]
@@ -51,17 +52,26 @@ public sealed class IdentityTrustBoundaryTests
         Assert.False(result.CanClaimProtection);
     }
 
-    private sealed class SimulatedVerifier : IIdentityBoundaryVerifier
+    [Fact]
+    public async Task AuthorizedEvaluationWithoutTrustedVerifierReturnsUnavailableAndFailsClosed()
     {
-        public IdentityEvidenceSourceTrust SourceTrust => IdentityEvidenceSourceTrust.SimulatedUntrusted;
+        var subject = "S-1-5-21-1-2-3-1001";
+        var now = DateTimeOffset.UtcNow;
+        var session = new CallerSessionIdentityClaims(Guid.NewGuid(), 1, subject, "caller-asserted");
+        var process = new CallerProcessIdentityClaims(42, now.AddSeconds(-1), subject,
+            "C:\\BPE-Synthetic\\reader.exe", new string('a', 64));
+        var target = PolicyTarget.Application(process.ExecutablePath, process.ExecutableSha256);
+        var permissiveRule = new EvaluationRule(Guid.NewGuid(), subject, target, PolicyRuleEffect.Allow,
+            SessionId: session.SessionId, SessionGeneration: session.SessionGeneration);
 
-        public Task<IdentityVerificationResult<VerifiedSessionIdentity>> VerifySessionAsync(
-            CallerSessionIdentityClaims claims, CancellationToken cancellationToken = default) =>
-            Task.FromResult(IdentityVerificationResult<VerifiedSessionIdentity>.Simulated("no-native-verifier"));
+        var result = await new ProtectionPolicyEvaluator(new ProtectedTargetCatalog()).EvaluateAuthorizedAsync(
+            session, process, target, now, [permissiveRule]);
 
-        public Task<IdentityVerificationResult<VerifiedProcessIdentity>> VerifyProcessAsync(
-            CallerProcessIdentityClaims claims, VerifiedSessionIdentity session,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(IdentityVerificationResult<VerifiedProcessIdentity>.Simulated("no-native-verifier"));
+        Assert.Equal(PolicyDecision.Restrict, result.Decision);
+        Assert.Equal(PolicyEvaluationStatus.IdentityUnavailable, result.Status);
+        Assert.True(result.FailClosed);
+        Assert.False(result.CanClaimProtection);
+        Assert.Equal("trusted-identity-verifier-unavailable", result.ReasonCode);
     }
+
 }

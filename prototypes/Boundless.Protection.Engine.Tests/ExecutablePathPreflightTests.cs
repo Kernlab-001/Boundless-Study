@@ -24,6 +24,10 @@ public sealed class ExecutablePathPreflightTests
     [InlineData("C:\\BPE-Synthetic\\NUL.exe")]
     [InlineData("C:\\BPE-Synthetic\\CONIN$.exe")]
     [InlineData("C:\\BPE-Synthetic\\CONOUT$.exe")]
+    [InlineData("C:\\BPE-Synthetic\\reader.exe\t")]
+    [InlineData("C:\\BPE-Synthetic\\reader .exe")]
+    [InlineData("C:\\BPE-Synthetic\\COM\u00B9.exe")]
+    [InlineData("C:\\BPE-Synthetic\\LPT\u00B3.log")]
     public void KnownAmbiguousAliasesAreRejected(string path)
     {
         var result = ExecutablePathPreflight.Inspect(path);
@@ -52,6 +56,18 @@ public sealed class ExecutablePathPreflightTests
         var result = ExecutablePathPreflight.Inspect(path);
 
         Assert.Equal(ExecutablePathPreflightStatus.UnsupportedRoot, result.Status);
+    }
+
+    [Theory]
+    [InlineData("C:\\BPE-Synthetic\\reader?.exe")]
+    [InlineData("C:\\BPE-Synthetic\\reader*.exe")]
+    [InlineData("C:\\BPE-Synthetic\\reader<bad>.exe")]
+    public void InvalidWindowsFilenameCharactersAreRejected(string path)
+    {
+        var result = ExecutablePathPreflight.Inspect(path);
+
+        Assert.Equal(ExecutablePathPreflightStatus.Invalid, result.Status);
+        Assert.False(result.CanUseForTrustedDecision);
     }
 
     [Theory]
