@@ -54,7 +54,7 @@ public sealed record ApplicationIdentity(string ExecutablePath, string Sha256)
 {
     public bool IsValid =>
         !string.IsNullOrWhiteSpace(ExecutablePath)
-        && (Regex.IsMatch(ExecutablePath, @"^[A-Za-z]:\\") || ExecutablePath.StartsWith(@"\\", StringComparison.Ordinal))
+        && ExecutablePathPreflight.Inspect(ExecutablePath).Status == ExecutablePathPreflightStatus.LexicallyValidButUnverified
         && Regex.IsMatch(Sha256, "^[A-Fa-f0-9]{64}$");
 
     internal string CanonicalPath => ExecutablePath.Trim().Replace('/', '\\').ToUpperInvariant();

@@ -40,7 +40,9 @@ public sealed record PolicyTarget(
 
     public bool IsValid => Kind switch
     {
-        PolicyTargetKind.Application => IsWindowsPath(ExecutablePath) && IsSha256(Sha256)
+        PolicyTargetKind.Application => IsWindowsPath(ExecutablePath)
+            && ExecutablePathPreflight.Inspect(ExecutablePath).Status == ExecutablePathPreflightStatus.LexicallyValidButUnverified
+            && IsSha256(Sha256)
             && Host is null && Port is null && Protocol == NetworkProtocol.Any,
         PolicyTargetKind.NetworkDestination => IsValidHost(Host) && (Port is null or >= 1 and <= 65535)
             && ExecutablePath is null && Sha256 is null && Enum.IsDefined(Protocol),
@@ -190,8 +192,8 @@ public sealed class ProtectedTargetCatalog
         if (additionalApplicationPaths is not null)
             foreach (var path in additionalApplicationPaths)
             {
-                if (string.IsNullOrWhiteSpace(path) || !(Regex.IsMatch(path, @"^[A-Za-z]:\\") || path.StartsWith(@"\\", StringComparison.Ordinal)))
-                    throw new ArgumentException("Protected application paths must be absolute Windows paths.", nameof(additionalApplicationPaths));
+                if (ExecutablePathPreflight.Inspect(path).Status != ExecutablePathPreflightStatus.LexicallyValidButUnverified)
+                    throw new ArgumentException("Protected application paths must use an unambiguous drive-rooted lexical form.", nameof(additionalApplicationPaths));
                 _applicationPaths.Add(PolicyTarget.CanonicalWindowsPath(path));
             }
         if (additionalNetworkTargets is not null)
@@ -206,9 +208,9 @@ public sealed class ProtectedTargetCatalog
     public static ProtectedTargetCatalog ForWindowsDirectory(string windowsDirectory, IEnumerable<string>? additionalApplicationPaths = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(windowsDirectory);
+        if (ExecutablePathPreflight.Inspect(windowsDirectory).Status != ExecutablePathPreflightStatus.LexicallyValidButUnverified)
+            throw new ArgumentException("Windows directory must use an unambiguous drive-rooted lexical form.", nameof(windowsDirectory));
         var root = PolicyTarget.CanonicalWindowsPath(windowsDirectory).TrimEnd('\\');
-        if (!(Regex.IsMatch(windowsDirectory, @"^[A-Za-z]:\\") || windowsDirectory.StartsWith(@"\\", StringComparison.Ordinal)))
-            throw new ArgumentException("Windows directory must be an absolute Windows path.", nameof(windowsDirectory));
 
         // Include common lexical aliases used by 32-bit callers. Reparse points,
         // 8.3 names, and arbitrary junction aliases remain unresolved without OS IO.
