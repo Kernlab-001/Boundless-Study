@@ -1,0 +1,94 @@
+<UserControl x:Class="BoundlessStudy.Desktop.Views.SubjectsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:BoundlessStudy.Desktop.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:SubjectsViewModel}"
+             AutomationProperties.Name="Subjects View"
+             AutomationProperties.HelpText="Review and manage academic subjects."
+             AutomationProperties.AutomationId="SubjectsView"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+             Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24" MaxWidth="720" HorizontalAlignment="Left">
+            <TextBlock Text="Study Subjects"
+                       FontSize="20"
+                       FontWeight="Bold"
+                       Margin="0,0,0,6"/>
+            <TextBlock Text="Academic subjects organized for focus sessions and study tasks."
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                       Margin="0,0,0,20"/>
+
+            <!-- Error Banner -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- Loading Indicator -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="Loading subjects..." FontStyle="Italic"/>
+            </Border>
+
+            <!-- Empty State -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                    BorderThickness="1"
+                    Padding="24"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="No subjects found." FontWeight="Bold" HorizontalAlignment="Center"/>
+            </Border>
+
+            <!-- Subjects List -->
+            <ListView x:Name="SubjectsListView"
+                      AutomationProperties.Name="Study Subjects List"
+                      AutomationProperties.HelpText="List of subjects."
+                      ItemsSource="{Binding Subjects}"
+                      MinWidth="640"
+                      MaxHeight="360"
+                      Margin="0,0,0,20">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="200"/>
+                        <GridViewColumn Header="Description" DisplayMemberBinding="{Binding Description}" Width="320"/>
+                        <GridViewColumn Header="Archived" DisplayMemberBinding="{Binding IsArchived}" Width="80"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <WrapPanel HorizontalAlignment="Left" Margin="0,0,0,16">
+                <Button x:Name="RefreshSubjectsButton"
+                        AutomationProperties.Name="Refresh Subjects"
+                        AutomationProperties.HelpText="Reloads the list of subjects."
+                        Content="_Refresh Subjects"
+                        Command="{Binding RefreshCommand}"
+                        MinWidth="150"
+                        MinHeight="36"
+                        Margin="0,0,12,6"/>
+
+                <Button x:Name="BackFromSubjectsButton"
+                        AutomationProperties.Name="Back to Home"
+                        AutomationProperties.HelpText="Returns to the home dashboard."
+                        Content="_Back to Home"
+                        Command="{Binding BackCommand}"
+                        MinWidth="120"
+                        MinHeight="36"
+                        Margin="0,0,12,6"/>
+            </WrapPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

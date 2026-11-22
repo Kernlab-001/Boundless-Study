@@ -1,0 +1,96 @@
+<UserControl x:Class="BoundlessStudy.Desktop.Views.TasksView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:BoundlessStudy.Desktop.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:TasksViewModel}"
+             AutomationProperties.Name="Tasks View"
+             AutomationProperties.HelpText="Review and manage study tasks."
+             AutomationProperties.AutomationId="TasksView"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+             Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24" MaxWidth="780" HorizontalAlignment="Left">
+            <TextBlock Text="Study Tasks"
+                       FontSize="20"
+                       FontWeight="Bold"
+                       Margin="0,0,0,6"/>
+            <TextBlock Text="Manage tasks and link them to focus sessions to track progress toward completion."
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                       Margin="0,0,0,20"/>
+
+            <!-- Error Banner -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- Loading Indicator -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="Loading tasks..." FontStyle="Italic"/>
+            </Border>
+
+            <!-- Empty State -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                    BorderThickness="1"
+                    Padding="24"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="No tasks found." FontWeight="Bold" HorizontalAlignment="Center"/>
+            </Border>
+
+            <!-- Tasks List -->
+            <ListView x:Name="TasksListView"
+                      AutomationProperties.Name="Study Tasks List"
+                      AutomationProperties.HelpText="List of study tasks."
+                      ItemsSource="{Binding Tasks}"
+                      MinWidth="700"
+                      MaxHeight="360"
+                      Margin="0,0,0,20">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Title" DisplayMemberBinding="{Binding Title}" Width="240"/>
+                        <GridViewColumn Header="Subject" DisplayMemberBinding="{Binding SubjectName}" Width="150"/>
+                        <GridViewColumn Header="Status" DisplayMemberBinding="{Binding Status}" Width="100"/>
+                        <GridViewColumn Header="Priority" DisplayMemberBinding="{Binding Priority}" Width="90"/>
+                        <GridViewColumn Header="Estimate" DisplayMemberBinding="{Binding EstimatedMinutes, StringFormat='{}{0} min'}" Width="80"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <WrapPanel HorizontalAlignment="Left" Margin="0,0,0,16">
+                <Button x:Name="RefreshTasksButton"
+                        AutomationProperties.Name="Refresh Tasks"
+                        AutomationProperties.HelpText="Reloads the list of tasks."
+                        Content="_Refresh Tasks"
+                        Command="{Binding RefreshCommand}"
+                        MinWidth="150"
+                        MinHeight="36"
+                        Margin="0,0,12,6"/>
+
+                <Button x:Name="BackFromTasksButton"
+                        AutomationProperties.Name="Back to Home"
+                        AutomationProperties.HelpText="Returns to the home dashboard."
+                        Content="_Back to Home"
+                        Command="{Binding BackCommand}"
+                        MinWidth="120"
+                        MinHeight="36"
+                        Margin="0,0,12,6"/>
+            </WrapPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

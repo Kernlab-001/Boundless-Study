@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Boundless Study Guardian",
+  "version": "0.1.0",
+  "description": "Browser Guardian for Boundless Study focus enforcement and distraction prevention.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "alarms",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Boundless Study Guardian"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjjfgoeghdckpppcfjinhcccffmkmkibn"
+}

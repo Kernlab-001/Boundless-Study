@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Application unit tests: use cases, ports, reward transaction behavior.
+       Uses in-memory fakes; no database, filesystem, or WPF dependency. -->
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BoundlessStudy.Application\BoundlessStudy.Application.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Domain\BoundlessStudy.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\BoundlessStudy.Contracts\Recovery\*.cs" Link="Contracts\%(FileName).cs" />
+    <Compile Include="..\..\src\BoundlessStudy.Contracts\Ipc\*.cs" Link="Contracts\%(FileName).cs" />
+    <Compile Include="..\..\src\BoundlessStudy.Desktop\Services\IRecoveryClient.cs" Link="Services\%(FileName).cs" />
+    <Compile Include="..\..\src\BoundlessStudy.Desktop\Services\IAgentClient.cs" Link="Services\%(FileName).cs" />
+    <Compile Include="..\..\src\BoundlessStudy.Desktop\Services\InMemoryAgentClient.cs" Link="Services\%(FileName).cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Per-user interactive WPF desktop UI (MVVM). Sends commands and queries to the
+       agent through the UI pipe; never opens SQLite directly and never references
+       Infrastructure (system-architecture.md sections 4, 5, 6). -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BoundlessStudy.Application\BoundlessStudy.Application.csproj" />
+    <ProjectReference Include="..\BoundlessStudy.Contracts\BoundlessStudy.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

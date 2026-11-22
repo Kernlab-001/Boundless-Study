@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BoundlessStudy.Agent/BoundlessStudy.Agent.csproj" />
+    <Project Path="src/BoundlessStudy.Application/BoundlessStudy.Application.csproj" />
+    <Project Path="src/BoundlessStudy.Bridge/BoundlessStudy.Bridge.csproj" />
+    <Project Path="src/BoundlessStudy.Contracts/BoundlessStudy.Contracts.csproj" />
+    <Project Path="src/BoundlessStudy.Desktop/BoundlessStudy.Desktop.csproj" />
+    <Project Path="src/BoundlessStudy.Domain/BoundlessStudy.Domain.csproj" />
+    <Project Path="src/BoundlessStudy.Infrastructure/BoundlessStudy.Infrastructure.csproj" />
+    <Project Path="src/BoundlessStudy.Service/BoundlessStudy.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BoundlessStudy.Application.Tests/BoundlessStudy.Application.Tests.csproj" />
+    <Project Path="tests/BoundlessStudy.Architecture.Tests/BoundlessStudy.Architecture.Tests.csproj" />
+    <Project Path="tests/BoundlessStudy.Domain.Tests/BoundlessStudy.Domain.Tests.csproj" />
+    <Project Path="tests/BoundlessStudy.Infrastructure.Tests/BoundlessStudy.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>

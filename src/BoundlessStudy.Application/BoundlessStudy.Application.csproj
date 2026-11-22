@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Application layer: use cases, ports, orchestration, command/query contracts.
+       References Domain only; contains no UI or database implementation
+       (system-architecture.md section 5). -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BoundlessStudy.Domain\BoundlessStudy.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

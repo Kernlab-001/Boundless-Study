@@ -1,0 +1,228 @@
+﻿<Window x:Class="BoundlessStudy.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:BoundlessStudy.Desktop.ViewModels"
+        xmlns:views="clr-namespace:BoundlessStudy.Desktop.Views"
+        mc:Ignorable="d"
+        Title="Boundless Study"
+        AutomationProperties.Name="Boundless Study Main Window"
+        AutomationProperties.HelpText="Main application window for study session management, focus tracking, and recovery."
+        AutomationProperties.AutomationId="MainWindow"
+        Height="680" Width="960"
+        MinWidth="720" MinHeight="480"
+        KeyboardNavigation.TabNavigation="Cycle"
+        KeyboardNavigation.DirectionalNavigation="Cycle"
+        Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+        Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+
+        <!-- View DataTemplates mapped to ViewModels -->
+        <DataTemplate DataType="{x:Type vm:HomeViewModel}">
+            <views:HomeView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:FocusSetupViewModel}">
+            <views:FocusSetupView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ActiveFocusViewModel}">
+            <views:ActiveFocusView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SessionHistoryViewModel}">
+            <views:SessionHistoryView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SubjectsViewModel}">
+            <views:SubjectsView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:TasksViewModel}">
+            <views:TasksView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:RecoveryDialogViewModel}">
+            <views:RecoveryView/>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ========================================================================= -->
+        <!-- Row 0: Top Navigation & Application Header Landmark                       -->
+        <!-- ========================================================================= -->
+        <Border Grid.Row="0"
+                AutomationProperties.Name="Application Header and Navigation"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
+            <DockPanel LastChildFill="True">
+
+                <!-- Left: Application Brand & Status -->
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Boundless Study"
+                               FontSize="18"
+                               FontWeight="Bold"
+                               AutomationProperties.Name="Application Brand Title"
+                               VerticalAlignment="Center"
+                               Margin="0,0,16,0" />
+
+                    <!-- Live Region for Connection Status -->
+                    <Border x:Name="StatusAnnouncementBorder"
+                            AutomationProperties.Name="System Status Live Region"
+                            AutomationProperties.LiveSetting="Polite"
+                            Background="{DynamicResource {x:Static SystemColors.InfoBrushKey}}"
+                            BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                            BorderThickness="1"
+                            Padding="8,3"
+                            CornerRadius="2"
+                            VerticalAlignment="Center">
+                        <TextBlock x:Name="StatusAnnouncementText"
+                                   AutomationProperties.Name="Current Agent Status"
+                                   Text="{Binding ConnectionStatusText}"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource {x:Static SystemColors.InfoTextBrushKey}}" />
+                    </Border>
+
+                    <!-- Retry Connection Button (Visible when offline/degraded) -->
+                    <Button x:Name="RetryButton"
+                            AutomationProperties.Name="Retry Agent Connection"
+                            AutomationProperties.HelpText="Attempts to reconnect to the background study agent service."
+                            Content="_Retry"
+                            Command="{Binding RetryConnectionCommand}"
+                            Visibility="{Binding IsOfflineOrDegraded, Converter={StaticResource BoolToVisibility}}"
+                            Margin="8,0,0,0"
+                            Padding="8,2"
+                            VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Right: Primary Navigation Buttons Landmark -->
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button x:Name="NavHomeButton"
+                            AutomationProperties.Name="Navigate to Home"
+                            AutomationProperties.HelpText="Switch to Home dashboard overview."
+                            Content="_Home"
+                            Command="{Binding NavigateHomeCommand}"
+                            Margin="4,0"
+                            Padding="12,5"/>
+
+                    <Button x:Name="NavFocusButton"
+                            AutomationProperties.Name="Navigate to Focus"
+                            AutomationProperties.HelpText="Switch to Focus session configuration."
+                            Content="_Focus"
+                            Command="{Binding NavigateFocusCommand}"
+                            Margin="4,0"
+                            Padding="12,5"/>
+
+                    <Button x:Name="NavTasksButton"
+                            AutomationProperties.Name="Navigate to Tasks"
+                            AutomationProperties.HelpText="Switch to study tasks workspace."
+                            Content="_Tasks"
+                            Command="{Binding NavigateTasksCommand}"
+                            Margin="4,0"
+                            Padding="12,5"/>
+
+                    <Button x:Name="NavSubjectsButton"
+                            AutomationProperties.Name="Navigate to Subjects"
+                            AutomationProperties.HelpText="Switch to academic subjects workspace."
+                            Content="_Subjects"
+                            Command="{Binding NavigateSubjectsCommand}"
+                            Margin="4,0"
+                            Padding="12,5"/>
+
+                    <Button x:Name="NavHistoryButton"
+                            AutomationProperties.Name="Navigate to Session History"
+                            AutomationProperties.HelpText="Switch to past focus session history."
+                            Content="H_istory"
+                            Command="{Binding NavigateHistoryCommand}"
+                            Margin="4,0"
+                            Padding="12,5"/>
+                </StackPanel>
+
+                <TextBlock Text=""/>
+            </DockPanel>
+        </Border>
+
+        <!-- ========================================================================= -->
+        <!-- Row 1: Global Pending Recovery Alert Banner (Live Region)                 -->
+        <!-- ========================================================================= -->
+        <Border Grid.Row="1"
+                x:Name="GlobalRecoveryAlertBanner"
+                AutomationProperties.Name="Global Recovery Alert Banner"
+                AutomationProperties.LiveSetting="Assertive"
+                Visibility="{Binding HasPendingRecovery, Converter={StaticResource BoolToVisibility}}"
+                Background="{DynamicResource {x:Static SystemColors.InfoBrushKey}}"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="0,0,0,1"
+                Padding="16,8">
+            <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right"
+                        x:Name="GlobalResolveRecoveryButton"
+                        AutomationProperties.Name="Resolve Interrupted Session"
+                        AutomationProperties.HelpText="Opens the recovery dialog to resume or discard the interrupted session."
+                        Content="Resolve _Now"
+                        Command="{Binding OpenRecoveryCommand}"
+                        VerticalAlignment="Center"
+                        Padding="12,4"
+                        Margin="12,0,0,0"/>
+
+                <TextBlock Text="{Binding PendingRecoveryNotice}"
+                           Foreground="{DynamicResource {x:Static SystemColors.InfoTextBrushKey}}"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ========================================================================= -->
+        <!-- Row 2: Main Content Area Workspace                                        -->
+        <!-- ========================================================================= -->
+        <ContentControl Grid.Row="2"
+                        x:Name="MainContentRegion"
+                        AutomationProperties.Name="Main Workspace Content"
+                        Content="{Binding CurrentViewModel}"
+                        Focusable="False"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch"/>
+
+        <!-- ========================================================================= -->
+        <!-- Row 3: Accessible Status Bar Landmark                                     -->
+        <!-- ========================================================================= -->
+        <Border Grid.Row="3"
+                AutomationProperties.Name="Status Bar"
+                Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                BorderThickness="0,1,0,0"
+                Padding="12,6">
+            <DockPanel LastChildFill="True">
+                <TextBlock DockPanel.Dock="Left"
+                           AutomationProperties.Name="Protection Engine Status"
+                           Text="{Binding ProtectionStatusText}"
+                           FontSize="12"
+                           VerticalAlignment="Center" />
+
+                <TextBlock DockPanel.Dock="Right"
+                           AutomationProperties.Name="High Contrast Indicator"
+                           Text="High Contrast: Available"
+                           FontSize="12"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                           VerticalAlignment="Center" />
+
+                <TextBlock AutomationProperties.Name="Current View Title Display"
+                           Text="{Binding CurrentViewTitle}"
+                           FontSize="12"
+                           FontStyle="Italic"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,51 @@
+# Boundless Study — repository ignore rules
+# Ignore generated build, test, IDE, and package output only.
+# Never ignore source, project/solution files, approved docs, or validation evidence.
+
+# .NET build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+artifacts/
+publish/
+*.binlog
+*.tlog
+*.tmp
+
+# Test output
+TestResults/
+TestResult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+
+# Visual Studio, VS Code, and Rider user state
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+*.VC.db
+*.VC.opendb
+
+# NuGet and package output
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+
+# MSBuild and ReSharper scratch output
+*.cache
+MSBuild.log
+UpgradeLog*.XML
+_ReSharper*/

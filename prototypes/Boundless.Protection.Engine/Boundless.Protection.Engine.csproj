@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Boundless.Protection.Engine</RootNamespace>
+    <AssemblyName>Boundless.Protection.Engine</AssemblyName>
+  </PropertyGroup>
+</Project>

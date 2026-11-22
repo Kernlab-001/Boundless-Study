@@ -1,0 +1,267 @@
+<UserControl x:Class="BoundlessStudy.Desktop.Views.HomeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:BoundlessStudy.Desktop.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:HomeViewModel}"
+             AutomationProperties.Name="Home Overview View"
+             AutomationProperties.HelpText="Home dashboard displaying profile progress, daily study XP cap, active session status, and quick navigation."
+             AutomationProperties.AutomationId="HomeView"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+             Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24" MaxWidth="800" HorizontalAlignment="Left">
+
+            <!-- Recovery Alert Banner (Live Region) -->
+            <Border x:Name="RecoveryAlertBanner"
+                    AutomationProperties.Name="Recovery Alert Banner"
+                    AutomationProperties.LiveSetting="Assertive"
+                    Visibility="{Binding HasInterruptedSession, Converter={StaticResource BoolToVisibility}}"
+                    Background="{DynamicResource {x:Static SystemColors.InfoBrushKey}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="16"
+                    Margin="0,0,0,20">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Attention: Interrupted Focus Session Awaiting Recovery"
+                                   FontWeight="Bold"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource {x:Static SystemColors.InfoTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding InterruptedSessionNotice}"
+                                   Foreground="{DynamicResource {x:Static SystemColors.InfoTextBrushKey}}"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <Button Grid.Column="1"
+                            x:Name="ResolveRecoveryButton"
+                            AutomationProperties.Name="Resolve Interrupted Session"
+                            AutomationProperties.HelpText="Opens the recovery dialog to resume or discard the interrupted session."
+                            Content="_Resolve Interrupted Session"
+                            Command="{Binding LaunchRecoveryCommand}"
+                            VerticalAlignment="Center"
+                            Padding="12,6"/>
+                </Grid>
+            </Border>
+
+            <!-- Active Session Card (if a session is running) -->
+            <Border x:Name="ActiveSessionCard"
+                    AutomationProperties.Name="Active Focus Session Card"
+                    Visibility="{Binding HasActiveSession, Converter={StaticResource BoolToVisibility}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
+                    BorderThickness="2"
+                    Padding="16"
+                    Margin="0,0,0,20">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Ongoing Focus Session in Progress"
+                                   FontWeight="Bold"
+                                   FontSize="15"
+                                   Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="Profile: " FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding ActiveSessionProfile}" Margin="0,0,16,0"/>
+                            <TextBlock Text="Elapsed: " FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding ActiveSessionElapsedDisplay}" Margin="0,0,16,0"/>
+                            <TextBlock Text="Planned: " FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding ActiveSessionPlannedDisplay}"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding ActiveSessionTaskTitle}"
+                                   Visibility="{Binding HasActiveSessionTask, Converter={StaticResource BoolToVisibility}}"
+                                   FontStyle="Italic"/>
+                    </StackPanel>
+
+                    <Button Grid.Column="1"
+                            x:Name="ViewActiveSessionButton"
+                            AutomationProperties.Name="View Active Session"
+                            AutomationProperties.HelpText="Navigates to the active focus session timer and control view."
+                            Content="_View Active Session"
+                            Command="{Binding ViewActiveSessionCommand}"
+                            VerticalAlignment="Center"
+                            Padding="14,8"/>
+                </Grid>
+            </Border>
+
+            <!-- Profile Progress Header -->
+            <TextBlock Text="Profile Overview &amp; Study Stats"
+                       FontSize="18"
+                       FontWeight="Bold"
+                       Margin="0,0,0,12"/>
+
+            <!-- Progress & Stats Cards Grid -->
+            <UniformGrid Columns="3" Margin="0,0,0,20">
+                <!-- Level Card -->
+                <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                        BorderThickness="1"
+                        Padding="16"
+                        Margin="0,0,8,8">
+                    <StackPanel>
+                        <TextBlock Text="Current Level"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding Level, StringFormat='Level {0}'}"
+                                   FontSize="22"
+                                   FontWeight="Bold"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Total XP Card -->
+                <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                        BorderThickness="1"
+                        Padding="16"
+                        Margin="4,0,4,8">
+                    <StackPanel>
+                        <TextBlock Text="Total Experience"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding TotalXpDisplay}"
+                                   FontSize="22"
+                                   FontWeight="Bold"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Streak Days Card -->
+                <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                        BorderThickness="1"
+                        Padding="16"
+                        Margin="8,0,0,8">
+                    <StackPanel>
+                        <TextBlock Text="Daily Streak"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding StreakDays, StringFormat='{}{0} Days'}"
+                                   FontSize="22"
+                                   FontWeight="Bold"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Today XP Card -->
+                <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                        BorderThickness="1"
+                        Padding="16"
+                        Margin="0,8,8,0">
+                    <StackPanel>
+                        <TextBlock Text="Today's Study XP"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding TodayXpDisplay}"
+                                   FontSize="18"
+                                   FontWeight="Bold"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Remaining Daily Cap Card -->
+                <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                        BorderThickness="1"
+                        Padding="16"
+                        Margin="4,8,4,0">
+                    <StackPanel>
+                        <TextBlock Text="Daily Cap Remaining"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{Binding RemainingDailyCap, StringFormat='{}{0} XP'}"
+                                   FontSize="18"
+                                   FontWeight="Bold"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Policy Disclosure Card -->
+                <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                        BorderThickness="1"
+                        Padding="16"
+                        Margin="8,8,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Daily Cap Policy"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="Max 300 session XP/day"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"/>
+                        <TextBlock Text="Qualified: ≥20 min session"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <!-- Error Banner -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorMessage}"
+                           TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- Quick Navigation Actions -->
+            <TextBlock Text="Quick Actions"
+                       FontSize="16"
+                       FontWeight="Bold"
+                       Margin="0,8,0,12"/>
+
+            <WrapPanel Margin="0,0,0,16">
+                <Button x:Name="StartFocusButton"
+                        AutomationProperties.Name="Start New Focus Session"
+                        AutomationProperties.HelpText="Configure and start a new focus study session."
+                        Content="_Start Focus Session"
+                        Command="{Binding NavigateFocusSetupCommand}"
+                        MinWidth="170"
+                        MinHeight="38"
+                        Margin="0,0,12,8"/>
+
+                <Button x:Name="ViewTasksButton"
+                        AutomationProperties.Name="View Study Tasks"
+                        AutomationProperties.HelpText="View and manage study tasks."
+                        Content="View _Tasks"
+                        Command="{Binding NavigateTasksCommand}"
+                        MinWidth="130"
+                        MinHeight="38"
+                        Margin="0,0,12,8"/>
+
+                <Button x:Name="ViewSubjectsButton"
+                        AutomationProperties.Name="View Study Subjects"
+                        AutomationProperties.HelpText="View and manage study subjects."
+                        Content="View S_ubjects"
+                        Command="{Binding NavigateSubjectsCommand}"
+                        MinWidth="130"
+                        MinHeight="38"
+                        Margin="0,0,12,8"/>
+
+                <Button x:Name="RefreshButton"
+                        AutomationProperties.Name="Refresh Overview Data"
+                        AutomationProperties.HelpText="Reload profile stats and active session status."
+                        Content="Re_fresh"
+                        Command="{Binding RefreshCommand}"
+                        MinWidth="110"
+                        MinHeight="38"
+                        Margin="0,0,12,8"/>
+            </WrapPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

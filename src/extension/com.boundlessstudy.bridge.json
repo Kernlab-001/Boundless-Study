@@ -1,0 +1,9 @@
+{
+  "name": "com.boundlessstudy.bridge",
+  "description": "Boundless Study Native Messaging Bridge Host",
+  "path": "BoundlessStudy.Bridge.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://jjfgoeghdckpppcfjinhcccffmkmkibn/"
+  ]
+}

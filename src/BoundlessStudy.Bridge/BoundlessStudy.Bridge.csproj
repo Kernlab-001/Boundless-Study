@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Per-browser native-messaging host: translates browser Native Messaging
+       frames to the agent protocol, validates origin, stays stateless. Stores no
+       study data and has no database or domain access (system-architecture.md
+       sections 4, 7.3). Uses Contracts only. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BoundlessStudy.Contracts\BoundlessStudy.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

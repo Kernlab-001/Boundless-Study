@@ -1,0 +1,109 @@
+<UserControl x:Class="BoundlessStudy.Desktop.Views.SessionHistoryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:BoundlessStudy.Desktop.ViewModels"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:SessionHistoryViewModel}"
+             AutomationProperties.Name="Session History View"
+             AutomationProperties.HelpText="Review recent study focus sessions, elapsed durations, outcomes, and XP rewards."
+             AutomationProperties.AutomationId="SessionHistoryView"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+             Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="24" MaxWidth="800" HorizontalAlignment="Left">
+
+            <!-- Header -->
+            <TextBlock Text="Focus Session History"
+                       FontSize="20"
+                       FontWeight="Bold"
+                       Margin="0,0,0,6"/>
+            <TextBlock Text="Past focus sessions, recorded study time, completion status, and XP awards."
+                       Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                       Margin="0,0,0,20"/>
+
+            <!-- Loading Indicator -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="Loading session history from background service..." FontStyle="Italic"/>
+            </Border>
+
+            <!-- Error Banner -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- Empty State -->
+            <Border BorderBrush="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}"
+                    BorderThickness="1"
+                    Padding="24"
+                    Margin="0,0,0,16"
+                    Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="No past focus sessions found."
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               Margin="0,0,0,6"/>
+                    <TextBlock Text="Start your first focus session from the Home overview or Focus Setup to track progress."
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
+                               HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- History List View -->
+            <ListView x:Name="HistoryListView"
+                      AutomationProperties.Name="Recent Focus Sessions List"
+                      AutomationProperties.HelpText="Table of recent focus sessions."
+                      ItemsSource="{Binding Sessions}"
+                      MinWidth="720"
+                      MaxHeight="400"
+                      Margin="0,0,0,20">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Date &amp; Time" DisplayMemberBinding="{Binding StartedAtDisplay}" Width="150"/>
+                        <GridViewColumn Header="Profile" DisplayMemberBinding="{Binding ProfileCode}" Width="90"/>
+                        <GridViewColumn Header="Status" DisplayMemberBinding="{Binding StateDisplay}" Width="100"/>
+                        <GridViewColumn Header="Duration" DisplayMemberBinding="{Binding DurationDisplay}" Width="200"/>
+                        <GridViewColumn Header="Task" DisplayMemberBinding="{Binding TaskTitleDisplay}" Width="160"/>
+                        <GridViewColumn Header="XP" DisplayMemberBinding="{Binding XpEarnedDisplay}" Width="60"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <!-- Action Buttons -->
+            <WrapPanel HorizontalAlignment="Left" Margin="0,0,0,16">
+                <Button x:Name="RefreshHistoryButton"
+                        AutomationProperties.Name="Refresh Session History"
+                        AutomationProperties.HelpText="Reloads the latest session history from the agent service."
+                        Content="_Refresh History"
+                        Command="{Binding RefreshCommand}"
+                        MinWidth="150"
+                        MinHeight="36"
+                        Margin="0,0,12,6"/>
+
+                <Button x:Name="BackToHomeButton"
+                        AutomationProperties.Name="Back to Home"
+                        AutomationProperties.HelpText="Returns to the home dashboard."
+                        Content="_Back to Home"
+                        Command="{Binding BackCommand}"
+                        MinWidth="120"
+                        MinHeight="36"
+                        Margin="0,0,12,6"/>
+            </WrapPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

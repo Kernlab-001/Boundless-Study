@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Architecture conformance tests: enforce the approved dependency rules and
+       project configuration from docs/04-architecture/system-architecture.md
+       sections 4 and 5 at build time. Per-layer unit test projects are added
+       with their implementation milestones. -->
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- net10.0-windows: the harness loads every product assembly, including the
+         three net10.0-windows executables. Tests run on Windows only by design. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Referenced only so the conformance harness can load each product assembly.
+         These references do not relax the rules asserted for the product projects. -->
+    <ProjectReference Include="..\..\src\BoundlessStudy.Agent\BoundlessStudy.Agent.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Application\BoundlessStudy.Application.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Bridge\BoundlessStudy.Bridge.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Contracts\BoundlessStudy.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Desktop\BoundlessStudy.Desktop.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Domain\BoundlessStudy.Domain.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Infrastructure\BoundlessStudy.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\BoundlessStudy.Service\BoundlessStudy.Service.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

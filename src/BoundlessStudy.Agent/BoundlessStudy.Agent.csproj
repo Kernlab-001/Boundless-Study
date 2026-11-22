@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Per-user background agent: sole owner of SQLite (the only process that opens
+       it), session engine, app guard, pipe servers, extension policy coordination,
+       backup coordination. Runs in the interactive user session without elevation
+       (system-architecture.md sections 4, 8). Composition root for Domain,
+       Application, Infrastructure, and Contracts. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BoundlessStudy.Application\BoundlessStudy.Application.csproj" />
+    <ProjectReference Include="..\BoundlessStudy.Contracts\BoundlessStudy.Contracts.csproj" />
+    <ProjectReference Include="..\BoundlessStudy.Domain\BoundlessStudy.Domain.csproj" />
+    <ProjectReference Include="..\BoundlessStudy.Infrastructure\BoundlessStudy.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,297 @@
+<UserControl x:Class="BoundlessStudy.Desktop.Views.RecoveryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:BoundlessStudy.Desktop.ViewModels"
+             xmlns:accessibility="clr-namespace:BoundlessStudy.Desktop.Accessibility"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance vm:RecoveryDialogViewModel}"
+             AutomationProperties.Name="Focus Session Recovery View"
+             AutomationProperties.HelpText="Review session checkpoint information and select whether to resume or discard the interrupted session."
+             AutomationProperties.AutomationId="RecoveryView"
+             Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+             Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"
+             MinWidth="480"
+             MinHeight="360">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header Section -->
+            <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                <TextBlock Text="Interrupted Focus Session Recovery"
+                           FontSize="18"
+                           FontWeight="Bold"
+                           Margin="0,0,0,6"/>
+                <TextBlock Text="A focus session was interrupted before completion. Review the checkpointed progress below and decide whether to resume or discard the session."
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"/>
+            </StackPanel>
+
+            <!-- Loading Indicator Live Region -->
+            <Border Grid.Row="1"
+                    x:Name="LoadingIndicatorBorder"
+                    AutomationProperties.Name="Loading status"
+                    AutomationProperties.LiveSetting="Polite"
+                    Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,12">
+                <TextBlock Text="Communicating with the background agent..."
+                           FontStyle="Italic"/>
+            </Border>
+
+            <!-- Error Banner Live Region -->
+            <Border Grid.Row="1"
+                    x:Name="ErrorNoticeBorder"
+                    AutomationProperties.Name="Recovery Error Notice"
+                    AutomationProperties.LiveSetting="Assertive"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,12">
+                <StackPanel>
+                    <TextBlock Text="Recovery Notice / Error"
+                               FontWeight="Bold"
+                               Margin="0,0,0,4"/>
+                    <TextBlock Text="{Binding ErrorMessage}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Notice Banner Live Region -->
+            <Border Grid.Row="1"
+                    x:Name="NoticeBannerBorder"
+                    AutomationProperties.Name="Recovery Notice"
+                    AutomationProperties.LiveSetting="Polite"
+                    Visibility="{Binding HasNotice, Converter={StaticResource BoolToVisibility}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,12">
+                <TextBlock Text="{Binding NoticeMessage}"
+                           TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- Interrupted Session Details Card -->
+            <Border Grid.Row="2"
+                    AutomationProperties.Name="Session Checkpoint Information Panel"
+                    Visibility="{Binding HasPendingSession, Converter={StaticResource BoolToVisibility}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="16"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Session Checkpoint Information"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Margin="0,0,0,12"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Original Planned Duration -->
+                        <TextBlock Grid.Row="0" Grid.Column="0"
+                                   x:Name="PlannedDurationLabel"
+                                   Text="Planned Duration:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=PlannedDurationLabel}"
+                                   Text="{Binding PendingSession.PlannedDurationDisplay}"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Elapsed Focus Time -->
+                        <TextBlock Grid.Row="1" Grid.Column="0"
+                                   x:Name="ElapsedFocusLabel"
+                                   Text="Elapsed Focus Time:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=ElapsedFocusLabel}"
+                                   Text="{Binding PendingSession.ElapsedFocusDisplay}"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Active Study Time -->
+                        <TextBlock Grid.Row="2" Grid.Column="0"
+                                   x:Name="ActiveStudyLabel"
+                                   Text="Active Study Time:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=ActiveStudyLabel}"
+                                   Text="{Binding PendingSession.ActiveStudyDisplay}"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Focus Profile -->
+                        <TextBlock Grid.Row="3" Grid.Column="0"
+                                   x:Name="FocusProfileLabel"
+                                   Text="Focus Profile:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=FocusProfileLabel}"
+                                   Text="{Binding PendingSession.ProfileCode}"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Study Task -->
+                        <TextBlock Grid.Row="4" Grid.Column="0"
+                                   x:Name="StudyTaskLabel"
+                                   Text="Study Task:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="4" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=StudyTaskLabel}"
+                                   Text="{Binding PendingSession.TaskTitleDisplay}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Interruption Timestamp -->
+                        <TextBlock Grid.Row="5" Grid.Column="0"
+                                   x:Name="InterruptionTimestampLabel"
+                                   Text="Interruption Timestamp:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="5" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=InterruptionTimestampLabel}"
+                                   Text="{Binding PendingSession.InterruptionTimestampDisplay}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Auto-Abandonment Deadline -->
+                        <TextBlock Grid.Row="6" Grid.Column="0"
+                                   x:Name="AutoAbandonmentLabel"
+                                   Text="Auto-Abandonment At:"
+                                   FontWeight="SemiBold"
+                                   Margin="0,2,8,6"/>
+                        <TextBlock Grid.Row="6" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=AutoAbandonmentLabel}"
+                                   Text="{Binding PendingSession.ExpiresAtDisplay}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,2,0,6"/>
+
+                        <!-- Time Remaining Before 24h Auto-Abandonment -->
+                        <TextBlock Grid.Row="7" Grid.Column="0"
+                                   x:Name="TimeRemainingLabel"
+                                   Text="Time Remaining (24h Window):"
+                                   FontWeight="Bold"
+                                   Margin="0,2,8,2"/>
+                        <TextBlock Grid.Row="7" Grid.Column="1"
+                                   AutomationProperties.LabeledBy="{Binding ElementName=TimeRemainingLabel}"
+                                   Text="{Binding PendingSession.TimeRemainingDisplay}"
+                                   FontWeight="Bold"
+                                   Margin="0,2,0,2"/>
+                    </Grid>
+
+                    <Separator Margin="0,12,0,12"/>
+
+                    <!-- Policy Disclosure Notes -->
+                    <StackPanel>
+                        <TextBlock Text="Recovery Policy (ADR-0005 &amp; §5.4):"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="• Interrupted sessions must be resolved within 24 hours of interruption."
+                                   Margin="0,0,0,2"/>
+                        <TextBlock Text="• Downtime while offline or terminated is not credited toward focus time."
+                                   Margin="0,0,0,2"/>
+                        <TextBlock Text="• Resuming restores the focus timer and reapplies blocking rules."
+                                   Margin="0,0,0,2"/>
+                        <TextBlock Text="• Discarding closes the session and awards eligible partial XP."
+                                   Margin="0,0,0,2"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Expiration Warning Alert Live Region -->
+            <Border Grid.Row="3"
+                    x:Name="ExpirationWarningBorder"
+                    AutomationProperties.Name="Session Expiration Warning"
+                    AutomationProperties.LiveSetting="Assertive"
+                    Visibility="{Binding PendingSession.IsExpired, Converter={StaticResource BoolToVisibility}}"
+                    BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                    BorderThickness="1"
+                    Padding="12"
+                    Margin="0,0,0,16">
+                <TextBlock Text="The 24-hour recovery window has passed. This session can no longer be resumed and must be discarded."
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap"/>
+            </Border>
+
+            <!-- Action Buttons Bar -->
+            <WrapPanel Grid.Row="4"
+                       HorizontalAlignment="Right"
+                       Margin="0,8,0,0">
+                <Button x:Name="ResumeButton"
+                        accessibility:AccessibilityProperties.IsDefaultFocused="True"
+                        AutomationProperties.Name="Resume Session"
+                        AutomationProperties.AutomationId="ResumeButton"
+                        AutomationProperties.HelpText="Resumes the interrupted focus session with its checkpointed elapsed time and reapplies blocking rules."
+                        Content="_Resume Session"
+                        Command="{Binding ResumeCommand}"
+                        IsDefault="True"
+                        MinWidth="140"
+                        MinHeight="36"
+                        Margin="0,0,10,6"/>
+
+                <Button x:Name="DiscardButton"
+                        AutomationProperties.Name="Discard Session"
+                        AutomationProperties.AutomationId="DiscardButton"
+                        AutomationProperties.HelpText="Discards the interrupted focus session. Any eligible partial study XP is recorded."
+                        Content="_Discard Session"
+                        Command="{Binding DiscardCommand}"
+                        MinWidth="140"
+                        MinHeight="36"
+                        Margin="0,0,10,6"/>
+
+                <Button x:Name="RefreshButton"
+                        AutomationProperties.Name="Check Again"
+                        AutomationProperties.AutomationId="RefreshButton"
+                        AutomationProperties.HelpText="Refreshes recovery state from the background agent."
+                        Content="_Check Again"
+                        Command="{Binding RefreshCommand}"
+                        MinWidth="110"
+                        MinHeight="36"
+                        Margin="0,0,10,6"/>
+
+                <Button x:Name="CloseButton"
+                        AutomationProperties.Name="Close"
+                        AutomationProperties.AutomationId="CloseButton"
+                        AutomationProperties.HelpText="Closes this recovery dialog."
+                        Content="Cl_ose"
+                        Command="{Binding CloseCommand}"
+                        IsCancel="True"
+                        MinWidth="80"
+                        MinHeight="36"
+                        Margin="0,0,0,6"/>
+            </WrapPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
