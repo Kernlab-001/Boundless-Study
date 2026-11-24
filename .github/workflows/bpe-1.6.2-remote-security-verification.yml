@@ -181,7 +181,11 @@ jobs:
           New-Item -ItemType Directory -Path $workDir -Force | Out-Null
           $sourcesReport = Join-Path $workDir 'sources.json'
           $historyReport = Join-Path $workDir 'history.json'
+          $approvedPublicKeyPath = 'src/extension/manifest.json'
+          $approvedPublicKeyLine = 24
+          $approvedPublicKeyBlob = '5bede08bb0995a2e93aa1fcd309b2f9d5c626311'
           $hasFindings = $false
+          $reviewedFindings = 0
           $reachableCommits = @(git rev-list --all)
           if ($LASTEXITCODE -ne 0 -or $reachableCommits.Count -eq 0) {
             throw 'Could not determine the checked-out reachable commit history.'
@@ -205,16 +209,43 @@ jobs:
             if (-not [string]::IsNullOrWhiteSpace($rawReport)) {
               $findings = @(ConvertFrom-Json -InputObject $rawReport)
             }
+            if ($scanExit -eq 1 -and $findings.Count -eq 0) {
+              throw "$scanName Gitleaks returned its findings exit code without parseable findings."
+            }
             "### $scanName"
             "Finding count: $($findings.Count)"
+            $unreviewedCount = 0
             foreach ($finding in $findings) {
+              $reviewedPublicKey = $false
+              if ($finding.RuleID -eq 'generic-api-key' -and $finding.File -eq $approvedPublicKeyPath -and $finding.StartLine -eq $approvedPublicKeyLine) {
+                $blobSpec = if ($scanName -eq 'Current source tree') {
+                  "HEAD:$approvedPublicKeyPath"
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace([string]$finding.Commit)) {
+                  "$($finding.Commit):$approvedPublicKeyPath"
+                }
+                else {
+                  ''
+                }
+                if ($blobSpec) {
+                  $manifestBlob = (& git rev-parse --verify $blobSpec 2>$null | Out-String).Trim()
+                  $reviewedPublicKey = ($LASTEXITCODE -eq 0 -and $manifestBlob -eq $approvedPublicKeyBlob)
+                }
+              }
+              if ($reviewedPublicKey) {
+                "Reviewed false positive: Chrome manifest public-key field; file: $approvedPublicKeyPath; line: $approvedPublicKeyLine; commit: $($finding.Commit)"
+                $script:reviewedFindings++
+                continue
+              }
               # Deliberately emit only location and rule metadata; never match, line, secret, or fingerprint values.
               $rule = ([string]$finding.RuleID -replace '[\x00-\x1F\x7F]', ' ' -replace '::', '__')
               $file = ([string]$finding.File -replace '[\x00-\x1F\x7F]', ' ' -replace '::', '__')
               $commit = ([string]$finding.Commit -replace '[\x00-\x1F\x7F]', ' ' -replace '::', '__')
               "- Rule: $rule; file: $file; line: $($finding.StartLine); commit: $commit"
+              $unreviewedCount++
             }
-            if ($scanExit -eq 1 -or $findings.Count -gt 0) { $script:hasFindings = $true }
+            "Unreviewed finding count: $unreviewedCount"
+            if ($unreviewedCount -gt 0) { $script:hasFindings = $true }
             Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
           }
 
@@ -224,5 +255,6 @@ jobs:
           if ($hasFindings) {
             throw 'Gitleaks reported one or more findings. Only sanitized locations were printed; review privately before changing the code or history.'
           }
-          'Both Gitleaks scans completed with no findings.'
+          "Both Gitleaks scans completed; reviewed false-positive instances: $reviewedFindings; unreviewed findings: 0."
+
 
