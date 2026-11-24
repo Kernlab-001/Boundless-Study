@@ -1,0 +1,228 @@
+name: BPE-1.6.2 Remote Security Verification
+
+on:
+  push:
+    branches:
+      - bpe-1.6.2-remote-security-verification
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-verification:
+    name: Windows DACL and Release verification
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Record Windows runner and token context
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:OS -ne 'Windows_NT') {
+            throw 'DACL verification requires a Windows runner; refusing to let a platform guard silently pass.'
+          }
+          "Runner image: $env:ImageOS $env:ImageVersion"
+          "Runner OS label: $env:RUNNER_OS"
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
+          '--- User identity ---'
+          whoami /user
+          '--- Group and integrity labels ---'
+          whoami /groups
+          '--- Token privileges ---'
+          whoami /priv
+
+      - name: Restore solution
+        run: dotnet restore BoundlessStudy.slnx
+
+      - name: Run focused DACL test
+        run: dotnet test tests/BoundlessStudy.Infrastructure.Tests/BoundlessStudy.Infrastructure.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~DataDirectorySecurityTests.New_directory_gets_a_protected_owner_only_dacl" --logger "console;verbosity=normal"
+
+      - name: Run complete Infrastructure test project
+        run: dotnet test tests/BoundlessStudy.Infrastructure.Tests/BoundlessStudy.Infrastructure.Tests.csproj -c Release --no-restore --logger "console;verbosity=minimal"
+
+      - name: Build Release solution
+        run: dotnet build BoundlessStudy.slnx -c Release --no-restore
+
+      - name: Run complete Release solution tests
+        run: dotnet test BoundlessStudy.slnx -c Release --no-build --no-restore --logger "console;verbosity=minimal"
+
+  dependency-audit:
+    name: NuGet dependency inventory and vulnerability audit
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore with NuGet audit enabled
+        run: dotnet restore BoundlessStudy.slnx
+
+      - name: Record solution direct and transitive dependency inventory
+        run: dotnet list BoundlessStudy.slnx package --include-transitive --no-restore
+
+      - name: Fail on solution vulnerability advisories
+        shell: pwsh
+        run: |
+          $output = & dotnet list BoundlessStudy.slnx package --vulnerable --include-transitive --format json --output-version 1
+          $dotnetExit = $LASTEXITCODE
+          if ($dotnetExit -ne 0) { throw "Solution vulnerability audit command failed with exit code $dotnetExit." }
+          $jsonText = $output -join [Environment]::NewLine
+          if ([string]::IsNullOrWhiteSpace($jsonText)) { throw 'Solution vulnerability audit returned no JSON; refusing an unverifiable pass.' }
+          try { $audit = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop }
+          catch { throw 'Solution vulnerability audit returned invalid JSON; refusing an unverifiable pass.' }
+          if ($audit.version -ne 1 -or $null -eq $audit.projects -or $null -eq $audit.sources -or $audit.sources.Count -eq 0) { throw 'Solution vulnerability audit JSON did not contain the expected schema version, projects, and audit sources.' }
+          $vulnerabilities = @()
+          foreach ($project in $audit.projects) {
+            foreach ($framework in $project.frameworks) {
+              foreach ($packageGroup in @('topLevelPackages', 'transitivePackages')) {
+                foreach ($package in $framework.$packageGroup) {
+                  foreach ($vulnerability in $package.vulnerabilities) {
+                    $vulnerabilities += [pscustomobject]@{ Project = $project.path; Package = $package.id; Severity = $vulnerability.severity; Advisory = $vulnerability.advisoryurl }
+                  }
+                }
+              }
+            }
+          }
+          "Solution vulnerability findings: $($vulnerabilities.Count)"
+          foreach ($finding in $vulnerabilities) {
+            # Package names and advisory links are metadata, never print any matched source or secret values.
+            "Package: $($finding.Package); severity: $($finding.Severity); advisory: $($finding.Advisory)"
+          }
+          if ($vulnerabilities.Count -gt 0) { throw 'Solution dependency audit found vulnerabilities; see sanitized package and advisory metadata above.' }
+
+      - name: Record BPE direct and transitive dependency inventory
+        run: dotnet list prototypes/Boundless.Protection.Engine/Boundless.Protection.Engine.csproj package --include-transitive --no-restore
+
+      - name: Fail on BPE vulnerability advisories
+        shell: pwsh
+        run: |
+          $projectPath = 'prototypes/Boundless.Protection.Engine/Boundless.Protection.Engine.csproj'
+          $output = & dotnet list $projectPath package --vulnerable --include-transitive --format json --output-version 1
+          $dotnetExit = $LASTEXITCODE
+          if ($dotnetExit -ne 0) { throw "BPE vulnerability audit command failed with exit code $dotnetExit." }
+          $jsonText = $output -join [Environment]::NewLine
+          if ([string]::IsNullOrWhiteSpace($jsonText)) { throw 'BPE vulnerability audit returned no JSON; refusing an unverifiable pass.' }
+          try { $audit = ConvertFrom-Json -InputObject $jsonText -ErrorAction Stop }
+          catch { throw 'BPE vulnerability audit returned invalid JSON; refusing an unverifiable pass.' }
+          if ($audit.version -ne 1 -or $null -eq $audit.projects -or $null -eq $audit.sources -or $audit.sources.Count -eq 0) { throw 'BPE vulnerability audit JSON did not contain the expected schema version, projects, and audit sources.' }
+          $vulnerabilities = @()
+          foreach ($project in $audit.projects) {
+            foreach ($framework in $project.frameworks) {
+              foreach ($packageGroup in @('topLevelPackages', 'transitivePackages')) {
+                foreach ($package in $framework.$packageGroup) {
+                  foreach ($vulnerability in $package.vulnerabilities) {
+                    $vulnerabilities += [pscustomobject]@{ Package = $package.id; Severity = $vulnerability.severity; Advisory = $vulnerability.advisoryurl }
+                  }
+                }
+              }
+            }
+          }
+          "BPE vulnerability findings: $($vulnerabilities.Count)"
+          foreach ($finding in $vulnerabilities) {
+            "Package: $($finding.Package); severity: $($finding.Severity); advisory: $($finding.Advisory)"
+          }
+          if ($vulnerabilities.Count -gt 0) { throw 'BPE dependency audit found vulnerabilities; see sanitized package and advisory metadata above.' }
+
+  secret-scan:
+    name: Gitleaks source and reachable history scan
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout full reachable history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Download and verify pinned Gitleaks binary
+        shell: pwsh
+        run: |
+          $version = '8.30.1'
+          $expectedSha256 = 'd29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e'
+          $download = Join-Path $env:RUNNER_TEMP "gitleaks_$version`_windows_x64.zip"
+          $installDir = Join-Path $env:RUNNER_TEMP 'gitleaks-bpe'
+          $url = "https://github.com/gitleaks/gitleaks/releases/download/v$version/gitleaks_$($version)_windows_x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $download
+          $actualSha256 = (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw 'Gitleaks archive SHA-256 did not match the reviewed release digest.'
+          }
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          Expand-Archive -LiteralPath $download -DestinationPath $installDir -Force
+          $gitleaks = Join-Path $installDir 'gitleaks.exe'
+          if (-not (Test-Path -LiteralPath $gitleaks -PathType Leaf)) {
+            throw 'Verified Gitleaks archive did not contain gitleaks.exe.'
+          }
+          "Gitleaks version: $(& $gitleaks version)"
+          "Gitleaks archive SHA-256 verified: $actualSha256"
+
+      - name: Scan current source tree and all reachable commit history
+        shell: pwsh
+        run: |
+          $gitleaks = Join-Path $env:RUNNER_TEMP 'gitleaks-bpe/gitleaks.exe'
+          $workDir = Join-Path $env:RUNNER_TEMP 'gitleaks-sanitized'
+          New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+          $sourcesReport = Join-Path $workDir 'sources.json'
+          $historyReport = Join-Path $workDir 'history.json'
+          $hasFindings = $false
+          $reachableCommits = @(git rev-list --all)
+          if ($LASTEXITCODE -ne 0 -or $reachableCommits.Count -eq 0) {
+            throw 'Could not determine the checked-out reachable commit history.'
+          }
+          "Reachable commit count: $($reachableCommits.Count)"
+          "Newest checked-out commit: $(& git rev-parse HEAD)"
+          "Oldest reachable commit: $($reachableCommits[-1])"
+          'History scan uses Gitleaks git mode with --all; source scan uses Gitleaks dir mode at repository root.'
+
+          function Invoke-SanitizedGitleaksScan([string] $scanName, [string[]] $scanArgs, [string] $reportPath) {
+            & $gitleaks @scanArgs --redact=100 --no-banner --no-color --report-format json --report-path $reportPath *> $null
+            $scanExit = $LASTEXITCODE
+            if ($scanExit -notin @(0, 1)) {
+              throw "$scanName Gitleaks scan failed with scanner exit code $scanExit."
+            }
+            if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+              throw "$scanName Gitleaks scan did not produce its expected report file."
+            }
+            $findings = @()
+            $rawReport = Get-Content -LiteralPath $reportPath -Raw
+            if (-not [string]::IsNullOrWhiteSpace($rawReport)) {
+              $findings = @(ConvertFrom-Json -InputObject $rawReport)
+            }
+            "### $scanName"
+            "Finding count: $($findings.Count)"
+            foreach ($finding in $findings) {
+              # Deliberately emit only location and rule metadata; never match, line, secret, or fingerprint values.
+              $rule = ([string]$finding.RuleID -replace '[\x00-\x1F\x7F]', ' ' -replace '::', '__')
+              $file = ([string]$finding.File -replace '[\x00-\x1F\x7F]', ' ' -replace '::', '__')
+              $commit = ([string]$finding.Commit -replace '[\x00-\x1F\x7F]', ' ' -replace '::', '__')
+              "- Rule: $rule; file: $file; line: $($finding.StartLine); commit: $commit"
+            }
+            if ($scanExit -eq 1 -or $findings.Count -gt 0) { $script:hasFindings = $true }
+            Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
+          }
+
+          Invoke-SanitizedGitleaksScan 'Current source tree' @('dir', '.') $sourcesReport
+          Invoke-SanitizedGitleaksScan 'All reachable Git history' @('git', '--log-opts=--all', '.') $historyReport
+          Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+          if ($hasFindings) {
+            throw 'Gitleaks reported one or more findings. Only sanitized locations were printed; review privately before changing the code or history.'
+          }
+          'Both Gitleaks scans completed with no findings.'
+
