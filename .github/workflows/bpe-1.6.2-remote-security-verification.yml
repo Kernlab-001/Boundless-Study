@@ -55,7 +55,7 @@ jobs:
         run: dotnet build BoundlessStudy.slnx -c Release --no-restore
 
       - name: Run complete Release solution tests
-        run: dotnet test BoundlessStudy.slnx -c Release --no-build --no-restore --logger "console;verbosity=minimal"
+        run: dotnet test BoundlessStudy.slnx -c Release --no-build --no-restore -m:1 --logger "console;verbosity=minimal"
 
   dependency-audit:
     name: NuGet dependency inventory and vulnerability audit
