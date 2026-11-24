@@ -1674,14 +1674,26 @@ public sealed class MultiProcessConcurrencyTests
         {
             var dotnetRoot = Path.GetDirectoryName(DotnetPath)!;
             var sdkDirectory = Directory.GetDirectories(Path.Combine(dotnetRoot, "sdk"))
-                .OrderByDescending(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+                .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var parsed) ? parsed : null))
+                .Where(candidate => candidate.Version is not null)
+                .OrderByDescending(candidate => candidate.Version)
+                .Select(candidate => candidate.Path)
                 .First();
             var cscPath = Path.Combine(sdkDirectory, "Roslyn", "bincore", "csc.dll");
             var referenceRoot = Path.Combine(dotnetRoot, "packs", "Microsoft.NETCore.App.Ref");
-            var referenceVersion = Directory.GetDirectories(referenceRoot)
-                .OrderByDescending(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
-                .First();
-            var referenceDirectory = Path.Combine(referenceVersion, "ref", "net10.0");
+            var targetFramework = $"net{Environment.Version.Major}.{Environment.Version.Minor}";
+            var referenceDirectory = Directory.GetDirectories(referenceRoot)
+                .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var parsed) ? parsed : null))
+                .Where(candidate => candidate.Version is not null
+                    && Directory.Exists(Path.Combine(candidate.Path, "ref", targetFramework)))
+                .OrderByDescending(candidate => candidate.Version)
+                .Select(candidate => Path.Combine(candidate.Path, "ref", targetFramework))
+                .FirstOrDefault();
+            if (referenceDirectory is null)
+            {
+                throw new DirectoryNotFoundException(
+                    $"Could not find a reference pack for the current .NET target framework '{targetFramework}' under '{referenceRoot}'.");
+            }
             var runtimeDirectory = Path.GetDirectoryName(typeof(SqliteConnection).Assembly.Location)!;
 
             var outputDirectory = Path.Combine(
