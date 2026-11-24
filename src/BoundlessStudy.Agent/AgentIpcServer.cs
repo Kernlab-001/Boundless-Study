@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using BoundlessStudy.Contracts.Ipc;
 
@@ -258,14 +259,53 @@ public sealed class AgentIpcServer : IAsyncDisposable
         }
     }
 
-    private static NamedPipeServerStream CreatePipeServerStream(string pipeName)
+    private NamedPipeServerStream CreatePipeServerStream(string pipeName)
     {
-        return new NamedPipeServerStream(
+        if (!OperatingSystem.IsWindows())
+        {
+            return new NamedPipeServerStream(
+                pipeName,
+                PipeDirection.InOut,
+                NamedPipeServerStream.MaxAllowedServerInstances,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous);
+        }
+
+        // Fail-closed: restrict the pipe to the expected user SID only.
+        // Any client whose SID cannot be verified is rejected at the ACL level
+        // before even reaching the per-message identity check in HandleConnectionAsync.
+        var security = new PipeSecurity();
+
+        if (!string.IsNullOrWhiteSpace(_expectedUserSid))
+        {
+            var userSid = new SecurityIdentifier(_expectedUserSid);
+            security.AddAccessRule(new PipeAccessRule(
+                userSid,
+                PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                AccessControlType.Allow));
+        }
+        else
+        {
+            // No SID available — fall back to current user so the pipe is never world-accessible.
+            var currentUser = WindowsIdentity.GetCurrent().User;
+            if (currentUser is not null)
+            {
+                security.AddAccessRule(new PipeAccessRule(
+                    currentUser,
+                    PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                    AccessControlType.Allow));
+            }
+        }
+
+        return NamedPipeServerStreamAcl.Create(
             pipeName,
             PipeDirection.InOut,
             NamedPipeServerStream.MaxAllowedServerInstances,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous);
+            PipeOptions.Asynchronous,
+            inBufferSize: 0,
+            outBufferSize: 0,
+            pipeSecurity: security);
     }
 
     public async Task StopAsync()

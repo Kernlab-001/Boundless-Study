@@ -5,7 +5,7 @@
  */
 
 const NATIVE_HOST_NAME = "com.boundlessstudy.bridge";
-const EXTENSION_ID = "jjfgoeghdckpppcfjinhcccffmkmkibn";
+const EXTENSION_ID = "fbeajcbhfcpegpedfjbdmdmlndadhppn";
 const HEARTBEAT_ALARM_NAME = "boundless_heartbeat_alarm";
 const POLICY_EXPIRY_ALARM_NAME = "boundless_policy_expiry_alarm";
 // Chromium alarms currently have a 30 second minimum period.

@@ -32,12 +32,57 @@ public sealed class BrowserProtectionMonitor
         if (_pollInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(pollInterval));
     }
 
+    /// <summary>
+    /// Performs a single protection-state synchronisation pass against the database.
+    /// Extracted so that both the initial sync and the periodic timer loop share identical logic.
+    /// </summary>
+    private async Task SyncOnceAsync(CancellationToken cancellationToken)
+    {
+        await using var repos = _store.CreateRepositories();
+        var profile = await repos.LocalProfiles.FindSingleAsync(cancellationToken);
+        if (profile is null) return;
+        var session = await repos.FocusSessions.FindActiveByProfileAsync(profile.Id, cancellationToken);
+        if (session is null || !session.IsActive) return;
+
+        var sitesConfigured = await repos.BlockedSites.CountEnabledAsync(profile.Id, cancellationToken) > 0;
+        if (!sitesConfigured || string.Equals(session.ProfileCode, BuiltInProfiles.FlexibleCode, StringComparison.OrdinalIgnoreCase))
+        {
+            if (session.ProtectionStatus != ProtectionStatus.NotRequired)
+            {
+                var noProtection = new SystemStateUseCases(repos.FocusSessions, repos.UnitOfWork, _clock, new SessionEventRecorder(repos.SessionEvents, _clock));
+                await noProtection.HandleProtectionStatusChangedAsync(session.Id, ProtectionStatus.NotRequired, VerificationStatus.Unverified, cancellationToken);
+            }
+            return;
+        }
+
+        var verified = _isPolicyApplied(session.Id);
+        var status = verified ? ProtectionStatus.Protected : ProtectionStatus.Degraded;
+        var verification = verified ? VerificationStatus.Verified : VerificationStatus.Degraded;
+        var state = new SystemStateUseCases(repos.FocusSessions, repos.UnitOfWork, _clock, new SessionEventRecorder(repos.SessionEvents, _clock));
+        await state.HandleProtectionStatusChangedAsync(session.Id, status, verification, cancellationToken);
+    }
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(_pollInterval);
         Guid? gapSessionId = null;
         double fractionalGapSeconds = 0;
         var lastTick = Stopwatch.GetTimestamp();
+
+        // Initial sync: push current protection state before the first timer tick
+        // so the agent reflects reality immediately on startup rather than after _pollInterval.
+        try
+        {
+            await SyncOnceAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"BoundlessStudy.Agent: browser protection monitor initial sync failed ({ex.GetType().Name}).");
+        }
 
         try
         {

@@ -10,8 +10,8 @@ namespace BoundlessStudy.Contracts.NativeMessaging;
 public static class NativeMessagingProtocol
 {
     public const string HostName = "com.boundlessstudy.bridge";
-    public const string ExtensionId = "jjfgoeghdckpppcfjinhcccffmkmkibn";
-    public const string AllowedOrigin = "chrome-extension://jjfgoeghdckpppcfjinhcccffmkmkibn/";
+    public const string ExtensionId = "fbeajcbhfcpegpedfjbdmdmlndadhppn";
+    public const string AllowedOrigin = "chrome-extension://fbeajcbhfcpegpedfjbdmdmlndadhppn/";
     public const int MaxMessageBytes = 1024 * 1024; // 1 MB
 
     // Message types

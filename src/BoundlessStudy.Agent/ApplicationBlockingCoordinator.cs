@@ -137,6 +137,7 @@ public sealed class ApplicationBlockingCoordinator
                             await TransitionToUnblockedIfNeededAsync(repos, session.Id, cancellationToken);
                             await SetFailedAsync(session.Id, currentSnapshot.TargetKey, currentSnapshot.DisplayName,
                                 "DesktopOverlayHeartbeatLost", repos, cancellationToken);
+                            continue;
                         }
 
                         await ClearIfNeededAsync(repos, cancellationToken);
