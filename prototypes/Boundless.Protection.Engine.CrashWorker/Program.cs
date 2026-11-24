@@ -1,5 +1,10 @@
 using Boundless.Protection.Engine;
 
+if (OperatingSystem.IsWindows())
+{
+    NativeMethods.SetErrorMode(0x0001 | 0x0002 | 0x8000); // SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+}
+
 if (args.Length is < 3 or > 4 || args[0] is not ("crash-before-apply" or "crash-after-partial-apply" or "crash-after-complete-apply" or "crash-during-restore" or "crash-after-restore" or "apply" or "hold-lock"))
 {
     Console.Error.WriteLine("Expected a BPE synthetic crash/apply/lock mode plus journal and provider database paths.");
@@ -105,4 +110,10 @@ sealed class CrashBeforeApplyProvider(IProtectionProvider inner) : IProtectionPr
     public Task<ProviderMutationResult> ApplyAsync(Guid ownerId, IReadOnlyList<RequestedRule> rules, long version, string fingerprint, CancellationToken token = default) => throw new SimulatedApplicationCrashException();
     public Task<ProviderMutationResult> RestoreAsync(Guid ownerId, IReadOnlyList<ProtectionRule> rules, CancellationToken token = default) => inner.RestoreAsync(ownerId, rules, token);
     public Task<IReadOnlyList<ProtectionRule>> GetOwnedRulesAsync(Guid ownerId, CancellationToken token = default) => inner.GetOwnedRulesAsync(ownerId, token);
+}
+
+static partial class NativeMethods
+{
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern uint SetErrorMode(uint uMode);
 }

@@ -27,10 +27,21 @@ public sealed class AuthorizedIdentityBoundaryTests
         var result = await evaluator.EvaluateAuthorizedAsync(session, process, target, Now, [rule]);
 
         Assert.Equal(PolicyDecision.Restrict, result.Decision);
-        Assert.Equal(PolicyEvaluationStatus.IdentityUnavailable, result.Status);
         Assert.True(result.FailClosed);
         Assert.False(result.CanClaimProtection);
-        Assert.Equal("trusted-identity-verifier-unavailable", result.ReasonCode);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal(PolicyEvaluationStatus.IdentityRejected, result.Status);
+            var expectedReason = generationClaim <= 0
+                ? "invalid-session-generation"
+                : "session-subject-sid-mismatch";
+            Assert.Equal(expectedReason, result.ReasonCode);
+        }
+        else
+        {
+            Assert.Equal(PolicyEvaluationStatus.IdentityUnsupported, result.Status);
+            Assert.Equal("platform-unsupported-windows-identity-required", result.ReasonCode);
+        }
     }
 
     [Fact]
@@ -49,9 +60,13 @@ public sealed class AuthorizedIdentityBoundaryTests
 
         Assert.Equal(PolicyDecision.Restrict, withAllow.Decision);
         Assert.Equal(PolicyDecision.Restrict, withoutRules.Decision);
+        var expectedStatus = OperatingSystem.IsWindows()
+            ? PolicyEvaluationStatus.IdentityRejected
+            : PolicyEvaluationStatus.IdentityUnsupported;
         Assert.All(new[] { withAllow, withoutRules }, result =>
         {
-            Assert.Equal(PolicyEvaluationStatus.IdentityUnavailable, result.Status);
+            Assert.Equal(expectedStatus, result.Status);
+            Assert.True(result.FailClosed);
             Assert.True(result.IsSimulation);
             Assert.False(result.CanClaimProtection);
         });

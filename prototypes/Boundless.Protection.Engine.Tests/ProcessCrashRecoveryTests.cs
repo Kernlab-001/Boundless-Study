@@ -225,6 +225,10 @@ public sealed class ProcessCrashRecoveryTests
                 CreateNoWindow = true
             }
         };
+        process.StartInfo.Environment["DOTNET_DbgEnableMiniDump"] = "0";
+        process.StartInfo.Environment["COMPlus_DbgEnableMiniDump"] = "0";
+        process.StartInfo.Environment["DOTNET_DbgEnableMiniDump"] = "0";
+        process.StartInfo.Environment["COMPlus_DbgEnableMiniDump"] = "0";
         process.StartInfo.ArgumentList.Add(workerDll);
         process.StartInfo.ArgumentList.Add(mode);
         process.StartInfo.ArgumentList.Add(journalPath);
@@ -232,7 +236,7 @@ public sealed class ProcessCrashRecoveryTests
         Assert.True(process.Start(), "Could not start the BPE crash worker.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         try
         {
             await process.WaitForExitAsync(timeout.Token);
@@ -241,7 +245,7 @@ public sealed class ProcessCrashRecoveryTests
         {
             if (!process.HasExited) process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync();
-            throw new TimeoutException($"Crash worker '{mode}' exceeded its 30 second bound.");
+            throw new TimeoutException($"Crash worker '{mode}' exceeded its timeout bound.");
         }
         var standardOutput = await stdout;
         var standardError = await stderr;
@@ -262,6 +266,8 @@ public sealed class ProcessCrashRecoveryTests
                 CreateNoWindow = true
             }
         };
+        process.StartInfo.Environment["DOTNET_DbgEnableMiniDump"] = "0";
+        process.StartInfo.Environment["COMPlus_DbgEnableMiniDump"] = "0";
         process.StartInfo.ArgumentList.Add(workerDll);
         process.StartInfo.ArgumentList.Add(mode);
         process.StartInfo.ArgumentList.Add(journalPath);

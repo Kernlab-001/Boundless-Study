@@ -244,22 +244,38 @@ public sealed class ProtectedTargetCatalog
 public sealed class ProtectionPolicyEvaluator
 {
     private static readonly Regex SidPattern = new(@"^S-1-(?:\d+-){1,14}\d+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly TimeSpan LiveVerificationClockEntryTolerance = TimeSpan.FromMilliseconds(250);
     private readonly ProtectedTargetCatalog _protectedTargets;
     private readonly TimeSpan _maximumIdentityAge;
+    private readonly IIdentityBoundaryVerifier? _identityVerifier;
+    private readonly Func<bool> _isWindows;
 
     public ProtectionPolicyEvaluator(ProtectedTargetCatalog protectedTargets, TimeSpan? maximumIdentityAge = null)
+        : this(protectedTargets, maximumIdentityAge, identityVerifier: null, isWindows: null)
+    {
+    }
+
+    internal ProtectionPolicyEvaluator(
+        ProtectedTargetCatalog protectedTargets,
+        TimeSpan? maximumIdentityAge,
+        IIdentityBoundaryVerifier? identityVerifier,
+        Func<bool>? isWindows = null)
     {
         _protectedTargets = protectedTargets ?? throw new ArgumentNullException(nameof(protectedTargets));
         _maximumIdentityAge = maximumIdentityAge ?? TimeSpan.FromSeconds(30);
         if (_maximumIdentityAge <= TimeSpan.Zero || _maximumIdentityAge > TimeSpan.FromMinutes(5))
             throw new ArgumentOutOfRangeException(nameof(maximumIdentityAge), "Identity freshness must be between zero and five minutes.");
+        _identityVerifier = identityVerifier;
+        _isWindows = isWindows ?? OperatingSystem.IsWindows;
     }
 
     /// <summary>
-    /// Authorization entry point for future trusted identity verification. This build
-    /// deliberately has no OS-backed verifier, so every request fails closed with an
-    /// explicit unavailable result. Caller-supplied claims are never promoted to
-    /// verified evidence. Use <see cref="Evaluate"/> only for simulation.
+    /// Authorization entry point backed by OS identity verification on Windows.
+    /// Caller-supplied claims are verified via the configured <see cref="IIdentityBoundaryVerifier"/>
+    /// (defaulting to <see cref="WindowsIdentityBoundaryVerifier.Default"/> on Windows) and never
+    /// promoted without OS verification. Non-Windows platforms fail closed with
+    /// <see cref="PolicyEvaluationStatus.IdentityUnsupported"/>.
+    /// Use <see cref="Evaluate"/> only for simulation.
     /// </summary>
     public Task<PolicyEvaluationResult> EvaluateAuthorizedAsync(
         CallerSessionIdentityClaims sessionClaims,
@@ -272,13 +288,28 @@ public sealed class ProtectionPolicyEvaluator
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(sessionClaims);
         ArgumentNullException.ThrowIfNull(processClaims);
-        return Task.FromResult(IdentityUnavailable("trusted-identity-verifier-unavailable"));
+
+        if (!_isWindows())
+        {
+            return Task.FromResult(
+                Closed(PolicyEvaluationStatus.IdentityUnsupported, "platform-unsupported-windows-identity-required"));
+        }
+
+        var verifier = _identityVerifier ?? WindowsIdentityBoundaryVerifier.Default;
+        return EvaluateAuthorizedAsync(
+            verifier,
+            sessionClaims,
+            processClaims,
+            target,
+            evaluatedAtUtc,
+            rules,
+            cancellationToken);
     }
 
     /// <summary>
     /// Trusted-verifier path reserved to this assembly. The verifier interface and
     /// evidence constructors are internal so external callers cannot claim the OS
-    /// verified source flag or mint evidence. There is no implementation in BPE-1.6.1.
+    /// verified source flag or mint evidence.
     /// </summary>
     internal async Task<PolicyEvaluationResult> EvaluateAuthorizedAsync(
         IIdentityBoundaryVerifier? verifier,
@@ -289,34 +320,74 @@ public sealed class ProtectionPolicyEvaluator
         IEnumerable<EvaluationRule>? rules,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(sessionClaims);
+        ArgumentNullException.ThrowIfNull(processClaims);
+
         if (verifier is null) return IdentityUnavailable("trusted-identity-verifier-unavailable");
         if (verifier.SourceTrust != IdentityEvidenceSourceTrust.OperatingSystemVerified)
             return Closed(PolicyEvaluationStatus.IdentityUnsupported, "verifier-source-not-trusted");
 
+        var verificationStartedUtc = DateTimeOffset.UtcNow;
         var sessionResult = await verifier.VerifySessionAsync(sessionClaims, cancellationToken).ConfigureAwait(false);
         if (sessionResult.Status != IdentityVerificationStatus.Verified)
             return FromVerificationFailure(sessionResult.Status, sessionResult.ReasonCode);
-        if (!IdentityTrustBoundary.IsTrustedSession(verifier, sessionResult)
-            || !SessionEvidenceMatchesClaims(sessionResult.Evidence!, sessionClaims, evaluatedAtUtc))
-            return Closed(PolicyEvaluationStatus.IdentityRejected, "verified-session-does-not-match-claims");
-
-        var processResult = await verifier.VerifyProcessAsync(processClaims, sessionResult.Evidence!, cancellationToken).ConfigureAwait(false);
-        if (processResult.Status != IdentityVerificationStatus.Verified)
-            return FromVerificationFailure(processResult.Status, processResult.ReasonCode);
-        if (!IdentityTrustBoundary.IsTrustedProcess(verifier, processResult, sessionResult.Evidence)
-            || !ProcessEvidenceMatchesClaims(processResult.Evidence!, processClaims, evaluatedAtUtc))
-            return Closed(PolicyEvaluationStatus.IdentityRejected, "verified-process-does-not-match-claims");
 
         var session = sessionResult.Evidence!;
+        var sessionEvaluatedAtUtc = ResolveLiveVerificationTimestamp(
+            verifier, evaluatedAtUtc, verificationStartedUtc, session.AuthenticatedAtUtc, session.ExpiresAtUtc);
+        if (!IdentityTrustBoundary.IsTrustedSession(verifier, sessionResult)
+            || !SessionEvidenceMatchesClaims(session, sessionClaims, sessionEvaluatedAtUtc))
+            return Closed(PolicyEvaluationStatus.IdentityRejected, "verified-session-does-not-match-claims");
+
+        var processResult = await verifier.VerifyProcessAsync(processClaims, session, cancellationToken).ConfigureAwait(false);
+        if (processResult.Status != IdentityVerificationStatus.Verified)
+            return FromVerificationFailure(processResult.Status, processResult.ReasonCode);
+
         var process = processResult.Evidence!;
+        var effectiveEvaluatedAtUtc = ResolveLiveVerificationTimestamp(
+            verifier, sessionEvaluatedAtUtc, verificationStartedUtc, process.ObservedAtUtc, session.ExpiresAtUtc);
+        if (!IdentityTrustBoundary.IsTrustedProcess(verifier, processResult, session)
+            || !ProcessEvidenceMatchesClaims(process, processClaims, effectiveEvaluatedAtUtc))
+            return Closed(PolicyEvaluationStatus.IdentityRejected, "verified-process-does-not-match-claims");
+
         var request = new PolicyEvaluationRequest(
             new ProtectionSessionContext(session.SessionId, session.Generation, session.SubjectSid,
                 session.StartsAtUtc, session.ExpiresAtUtc, true),
             new ProcessIdentitySnapshot(process.ProcessId, process.ProcessStartUtc, process.ObservedAtUtc,
                 process.SubjectSid, process.ExecutablePath, process.ExecutableSha256),
             target,
-            evaluatedAtUtc);
+            effectiveEvaluatedAtUtc);
         return Evaluate(request, rules);
+    }
+
+    private static DateTimeOffset ResolveLiveVerificationTimestamp(
+        IIdentityBoundaryVerifier verifier,
+        DateTimeOffset evaluatedAtUtc,
+        DateTimeOffset verificationStartedUtc,
+        DateTimeOffset evidenceObservedAtUtc,
+        DateTimeOffset sessionExpiresAtUtc)
+    {
+        if (verifier is not WindowsIdentityBoundaryVerifier)
+            return evaluatedAtUtc;
+
+        var verificationNowUtc = DateTimeOffset.UtcNow;
+        if (evaluatedAtUtc.Offset != TimeSpan.Zero
+            || evaluatedAtUtc < verificationStartedUtc - LiveVerificationClockEntryTolerance
+            || evaluatedAtUtc > verificationNowUtc)
+        {
+            return evaluatedAtUtc;
+        }
+
+        if (evidenceObservedAtUtc >= verificationStartedUtc
+            && evidenceObservedAtUtc <= verificationNowUtc
+            && evidenceObservedAtUtc > evaluatedAtUtc
+            && evidenceObservedAtUtc < sessionExpiresAtUtc)
+        {
+            return evidenceObservedAtUtc;
+        }
+
+        return evaluatedAtUtc;
     }
 
     private bool SessionEvidenceMatchesClaims(

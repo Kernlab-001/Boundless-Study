@@ -65,13 +65,25 @@ public sealed class IdentityTrustBoundaryTests
             SessionId: session.SessionId, SessionGeneration: session.SessionGeneration);
 
         var result = await new ProtectionPolicyEvaluator(new ProtectedTargetCatalog()).EvaluateAuthorizedAsync(
-            session, process, target, now, [permissiveRule]);
+            null, session, process, target, now, [permissiveRule]);
 
         Assert.Equal(PolicyDecision.Restrict, result.Decision);
         Assert.Equal(PolicyEvaluationStatus.IdentityUnavailable, result.Status);
         Assert.True(result.FailClosed);
         Assert.False(result.CanClaimProtection);
         Assert.Equal("trusted-identity-verifier-unavailable", result.ReasonCode);
+
+        var publicResult = await new ProtectionPolicyEvaluator(new ProtectedTargetCatalog()).EvaluateAuthorizedAsync(
+            session, process, target, now, [permissiveRule]);
+
+        Assert.Equal(PolicyDecision.Restrict, publicResult.Decision);
+        Assert.True(publicResult.FailClosed);
+        Assert.False(publicResult.CanClaimProtection);
+        Assert.Equal(
+            OperatingSystem.IsWindows()
+                ? PolicyEvaluationStatus.IdentityRejected
+                : PolicyEvaluationStatus.IdentityUnsupported,
+            publicResult.Status);
     }
 
 }

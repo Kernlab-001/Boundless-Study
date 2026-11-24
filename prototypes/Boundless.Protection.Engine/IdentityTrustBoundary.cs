@@ -161,16 +161,13 @@ public sealed class IdentityVerificationResult<TEvidence> where TEvidence : clas
 }
 
 /// <summary>
-/// Contract for a future platform verifier. This project supplies no OS-backed
-/// implementation. Implementations must authenticate session identity from an
-/// OS-authoritative security context, compare caller claims, and bind process
-/// evidence to the same live process instance. A simulator or caller-fed source
-/// cannot satisfy this contract and must be rejected for trusted decisions.
-/// This is a specification-only interface: verified evidence issuance is internal,
-/// so any future implementation must remain within this assembly or use a separately
-/// reviewed, controlled evidence-issuance boundary. This verifier is not wired into
-/// the public authorization entry point in this milestone; that entry point returns
-/// IdentityUnavailable until an in-assembly trusted verifier is implemented.
+/// Contract for a platform identity boundary verifier. Implementations must authenticate
+/// session identity from an OS-authoritative security context, compare caller claims,
+/// and bind process and executable evidence to the same live OS instances. A simulator
+/// or caller-fed source cannot satisfy this contract and must be rejected for trusted
+/// decisions. Verified evidence issuance is internal, keeping trusted implementations
+/// within this assembly's controlled boundary (implemented for Windows by
+/// <see cref="WindowsIdentityBoundaryVerifier"/>).
 /// </summary>
 internal interface IIdentityBoundaryVerifier
 {
