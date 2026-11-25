@@ -282,7 +282,8 @@ function Build-AppLockerPolicyXml {
 function Invoke-PreFlightPolicyGate {
     param(
         [string]$PolicyXmlPath,
-        [bool]$ExpectUser1Blocked
+        [bool]$ExpectUser1Blocked,
+        [ValidateSet('AuditOnly', 'Enabled')][string]$EnforcementMode = 'Enabled'
     )
 
     $adminUser = "$env:COMPUTERNAME\$env:USERNAME"
@@ -291,36 +292,50 @@ function Invoke-PreFlightPolicyGate {
 
     $checks = New-Object System.Collections.Generic.List[object]
 
-    # Critical executables must NEVER be denied for admin or SYSTEM
+    # Critical executables must NEVER evaluate to Denied or DeniedByDefault for admin or SYSTEM.
+    # For admin under Enabled mode, require explicit 'Allowed' to prove baseline Allow rules cover the exe.
+    # NT AUTHORITY\SYSTEM is inherently AllowedByDefault in AppLocker unless non-user enforcement is enabled.
     foreach ($exe in $script:CriticalExes) {
-        foreach ($acct in @($adminUser, 'NT AUTHORITY\SYSTEM')) {
-            $res = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $exe -User $acct
-            $checks.Add(@{ exe = $exe; user = $acct; decision = [string]$res.PolicyDecision })
-            if ([string]$res.PolicyDecision -ne 'Allowed') {
-                throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$($res.PolicyDecision)' for '$acct'."
-            }
+        $resAdmin = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $exe -User $adminUser
+        $decAdmin = [string]$resAdmin.PolicyDecision
+        $checks.Add(@{ exe = $exe; user = $adminUser; decision = $decAdmin })
+        if ($EnforcementMode -eq 'Enabled' -and $decAdmin -ne 'Allowed') {
+            throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$decAdmin' (expected explicit 'Allowed') for '$adminUser'."
+        }
+        if ($decAdmin -match 'Denied') {
+            throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$decAdmin' for '$adminUser'."
+        }
+
+        $resSys = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $exe -User 'NT AUTHORITY\SYSTEM'
+        $decSys = [string]$resSys.PolicyDecision
+        $checks.Add(@{ exe = $exe; user = 'NT AUTHORITY\SYSTEM'; decision = $decSys })
+        if ($decSys -notin @('Allowed', 'AllowedByDefault')) {
+            throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$decSys' for 'NT AUTHORITY\SYSTEM'."
         }
     }
 
-    # Verify AllowedExe is Allowed for User1
+    # Verify AllowedExe is not denied for User1 (must be explicit Allowed under Enabled mode)
     $rAllowed = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $script:AllowedExePath -User $user1
-    $checks.Add(@{ exe = $script:AllowedExePath; user = $user1; decision = [string]$rAllowed.PolicyDecision })
-    if ([string]$rAllowed.PolicyDecision -ne 'Allowed') {
-        throw "SAFETY ABORT: Allowed target evaluated as '$($rAllowed.PolicyDecision)' for '$user1'."
+    $decAllowed = [string]$rAllowed.PolicyDecision
+    $checks.Add(@{ exe = $script:AllowedExePath; user = $user1; decision = $decAllowed })
+    if (($EnforcementMode -eq 'Enabled' -and $decAllowed -ne 'Allowed') -or ($decAllowed -match 'Denied')) {
+        throw "SAFETY ABORT: Allowed target evaluated as '$decAllowed' for '$user1'."
     }
 
-    # Verify BlockedExe for User1 matches expectation (in AuditOnly, Test-AppLockerPolicy reports AllowedWithAudit or Denied; check appropriately)
+    # Verify BlockedExe for User1 matches expectation
     $rBlocked1 = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $script:BlockedExePath -User $user1
-    $checks.Add(@{ exe = $script:BlockedExePath; user = $user1; decision = [string]$rBlocked1.PolicyDecision })
-    if ($ExpectUser1Blocked -and ([string]$rBlocked1.PolicyDecision -notmatch 'Denied')) {
-        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$($rBlocked1.PolicyDecision)' (expected Denied) for '$user1'."
+    $decBlocked1 = [string]$rBlocked1.PolicyDecision
+    $checks.Add(@{ exe = $script:BlockedExePath; user = $user1; decision = $decBlocked1 })
+    if ($ExpectUser1Blocked -and ($decBlocked1 -notmatch 'Denied')) {
+        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$decBlocked1' (expected Denied) for '$user1'."
     }
 
-    # Verify BlockedExe is Allowed for User2
+    # Verify BlockedExe is Allowed (not denied) for User2
     $rBlocked2 = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $script:BlockedExePath -User $user2
-    $checks.Add(@{ exe = $script:BlockedExePath; user = $user2; decision = [string]$rBlocked2.PolicyDecision })
-    if ([string]$rBlocked2.PolicyDecision -ne 'Allowed') {
-        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$($rBlocked2.PolicyDecision)' (expected Allowed) for '$user2'."
+    $decBlocked2 = [string]$rBlocked2.PolicyDecision
+    $checks.Add(@{ exe = $script:BlockedExePath; user = $user2; decision = $decBlocked2 })
+    if (($EnforcementMode -eq 'Enabled' -and $decBlocked2 -ne 'Allowed') -or ($decBlocked2 -match 'Denied')) {
+        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$decBlocked2' (expected Allowed) for '$user2'."
     }
 
     return $checks
@@ -627,7 +642,7 @@ wevtutil sl output: $wevtOut
 
     $auditXml = Build-AppLockerPolicyXml -EnforcementMode 'AuditOnly' -IncludeBoundlessDeny $true
     $auditPath = Save-EvidenceText -FileName 'policy-01-auditonly.xml' -Content $auditXml
-    [void](Invoke-PreFlightPolicyGate -PolicyXmlPath $auditPath -ExpectUser1Blocked $false)
+    [void](Invoke-PreFlightPolicyGate -PolicyXmlPath $auditPath -ExpectUser1Blocked $false -EnforcementMode 'AuditOnly')
 
     $tApplyAudit = (Get-Date).ToUniversalTime()
     Set-AppLockerPolicy -XmlPolicy $auditPath
