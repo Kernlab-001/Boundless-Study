@@ -227,6 +227,40 @@ function Initialize-DynamicRunnerPaths {
     $script:CriticalExes = $dedupExes
 }
 
+function Invoke-AppLockerPolicySync {
+    param([switch]$RestartServiceAndFilter)
+
+    $gpOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
+
+    # Trigger Microsoft's PolicyConverter scheduled task (runs as SYSTEM) to compile SrpV2 XML into binary policy
+    $convOut = (& schtasks.exe /run /tn "\Microsoft\Windows\AppID\PolicyConverter" 2>&1) | Out-String
+    $deadline = (Get-Date).AddSeconds(12)
+    while ((Get-Date) -lt $deadline) {
+        $q = (& schtasks.exe /query /tn "\Microsoft\Windows\AppID\PolicyConverter" /fo LIST 2>&1) | Out-String
+        if ($q -notmatch 'Status:\s+Running') { break }
+        Start-Sleep -Milliseconds 300
+    }
+
+    if ($RestartServiceAndFilter) {
+        # Note: stopping AppIDSvc stops dependent applockerfltr; starting applockerfltr brings up BOTH in dependency order.
+        [void](& net stop AppIDSvc /y 2>&1)
+        Start-Sleep -Milliseconds 500
+    }
+
+    $fltrStart = (& sc.exe start applockerfltr 2>&1) | Out-String
+    $svc = Get-Service -Name AppIDSvc
+    if ($svc.Status -ne 'Running') {
+        [void](& net start AppIDSvc 2>&1)
+        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
+    }
+
+    return [ordered]@{
+        gpupdate        = $gpOut.Trim()
+        policyConverter = $convOut.Trim()
+        applockerfltr   = $fltrStart.Trim()
+    }
+}
+
 function Build-AppLockerPolicyXml {
     param(
         [ValidateSet('AuditOnly', 'Enabled')][string]$EnforcementMode,
@@ -599,34 +633,16 @@ try {
         criticalExesChecked = @($script:CriticalExes)
     }))
 
-    # Apply pre-existing synthetic admin baseline policy + gpupdate BEFORE starting AppIDSvc/applockerfltr
-    # so SrpV2\Exe is populated when AppIDSvc initializes.
+    # Apply pre-existing synthetic admin baseline policy + PolicyConverter + start applockerfltr & AppIDSvc
     $preAdminXml = Build-AppLockerPolicyXml -EnforcementMode 'AuditOnly' -IncludeBoundlessDeny $false -IncludeExternalAdmin $false
     $preAdminPath = Save-EvidenceText -FileName 'policy-00b-pre-admin-baseline.xml' -Content $preAdminXml
     Set-AppLockerPolicy -XmlPolicy $preAdminPath
-    $gpPreOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
-
-    # Explicitly start applockerfltr filter driver and AppIDSvc service
-    $fltrStartOut = (& sc.exe start applockerfltr 2>&1) | Out-String
-    if ($LASTEXITCODE -notin @(0, 1056)) {
-        $fltmcLoadOut = (& fltmc.exe load applockerfltr 2>&1) | Out-String
-        $fltrStartOut += "`nfltmc load applockerfltr: $fltmcLoadOut"
-    }
+    $syncStep2 = Invoke-AppLockerPolicySync -RestartServiceAndFilter
+    $gpPreOut = $syncStep2.gpupdate
+    $fltrStartOut = "$($syncStep2.policyConverter)`n$($syncStep2.applockerfltr)"
 
     $appIdQc = (& sc.exe qc AppIDSvc 2>&1) | Out-String
     $appIdSvc = Get-Service -Name AppIDSvc
-    if ($appIdSvc.Status -ne 'Running') {
-        $startOut = (& net start AppIDSvc 2>&1) | Out-String
-        if ($LASTEXITCODE -notin @(0, 2)) {
-            [void](& sc.exe config AppIDSvc start= auto 2>&1)
-            $startOut = (& net start AppIDSvc 2>&1) | Out-String
-            if ($LASTEXITCODE -notin @(0, 2)) {
-                throw "Failed to start AppIDSvc ($startOut | qc: $appIdQc)"
-            }
-        }
-        $appIdSvc.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
-        $appIdSvc.Refresh()
-    }
     if ($appIdSvc.Status -ne 'Running') { throw "AppIDSvc not running: $($appIdSvc.Status)" }
 
     $appidtelOut = ''
@@ -678,7 +694,8 @@ $fltmcOut
 
     $tApplyAudit = (Get-Date).ToUniversalTime()
     Set-AppLockerPolicy -XmlPolicy $auditPath
-    $gpAuditOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
+    $syncStep3 = Invoke-AppLockerPolicySync
+    $gpAuditOut = "$($syncStep3.gpupdate)`nPolicyConverter: $($syncStep3.policyConverter)"
     $effAudit = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $true -ExpectedMode 'AuditOnly'
     [void](Save-EvidenceText -FileName 'policy-01-effective-auditonly.xml' -Content $effAudit)
 
@@ -729,16 +746,9 @@ $srpV2Keys
 
     $tApplyEnforced = (Get-Date).ToUniversalTime()
     Set-AppLockerPolicy -XmlPolicy $enforcedPath
-    $gpEnfOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
-
-    # Try cycling AppIDSvc after Enabled SrpV2 policy is written (may hit PPL Access Denied on some SKUs)
-    $bounceOut = ''
-    try {
-        $stopOut = (& net stop AppIDSvc /y 2>&1) | Out-String
-        $startOut2 = (& net start AppIDSvc 2>&1) | Out-String
-        $bounceOut = "stop=$stopOut`nstart=$startOut2"
-    }
-    catch { $bounceOut = "bounce error: $_" }
+    $syncStep4 = Invoke-AppLockerPolicySync -RestartServiceAndFilter
+    $gpEnfOut = "$($syncStep4.gpupdate)`nPolicyConverter: $($syncStep4.policyConverter)"
+    $bounceOut = $syncStep4.applockerfltr
 
     $effEnforced = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $true -ExpectedMode 'Enabled'
     [void](Save-EvidenceText -FileName 'policy-02-effective-enabled.xml' -Content $effEnforced)
@@ -916,6 +926,7 @@ $sysEv
 "@
     $extDeltaPath = Save-EvidenceText -FileName 'policy-03a-external-admin-delta.xml' -Content $extDeltaXml
     Set-AppLockerPolicy -XmlPolicy $extDeltaPath -Merge
+    [void](Invoke-AppLockerPolicySync)
 
     $afterExternalXml = Get-AppLockerXmlSafe -Scope 'Local'
     [void](Save-EvidenceText -FileName 'policy-03-external-drift.xml' -Content $afterExternalXml)
@@ -959,6 +970,7 @@ $sysEv
 
     $postRecoveryPath = Save-EvidenceText -FileName 'policy-04-post-recovery.xml' -Content $recoveryEdit.updatedXml
     Set-AppLockerPolicy -XmlPolicy $postRecoveryPath
+    [void](Invoke-AppLockerPolicySync)
     $effRecovery = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $false
     [void](Save-EvidenceText -FileName 'policy-04-effective-post-recovery.xml' -Content $effRecovery)
     Start-Sleep -Seconds 2
@@ -986,6 +998,7 @@ $sysEv
     $reapplyXml = Build-AppLockerPolicyXml -EnforcementMode 'Enabled' -IncludeBoundlessDeny $true -IncludeExternalAdmin $true
     $reapplyPath = Save-EvidenceText -FileName 'policy-04b-reapply-for-step12.xml' -Content $reapplyXml
     Set-AppLockerPolicy -XmlPolicy $reapplyPath
+    [void](Invoke-AppLockerPolicySync)
     [void](Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $true -ExpectedMode 'Enabled')
     Start-Sleep -Seconds 2
 
@@ -1000,6 +1013,7 @@ $sysEv
 
     $postRestorePath = Save-EvidenceText -FileName 'policy-05-post-restore.xml' -Content $restoreEdit.updatedXml
     Set-AppLockerPolicy -XmlPolicy $postRestorePath
+    [void](Invoke-AppLockerPolicySync)
     $effPostRestore = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $false
     [void](Save-EvidenceText -FileName 'policy-05-effective-post-restore.xml' -Content $effPostRestore)
     Start-Sleep -Seconds 2
