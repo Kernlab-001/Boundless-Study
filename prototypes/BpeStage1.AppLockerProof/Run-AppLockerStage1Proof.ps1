@@ -729,9 +729,48 @@ $srpV2Keys
 
     $tApplyEnforced = (Get-Date).ToUniversalTime()
     Set-AppLockerPolicy -XmlPolicy $enforcedPath
-    [void](& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1)
+    $gpEnfOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
+
+    # Try cycling AppIDSvc after Enabled SrpV2 policy is written (may hit PPL Access Denied on some SKUs)
+    $bounceOut = ''
+    try {
+        $stopOut = (& net stop AppIDSvc /y 2>&1) | Out-String
+        $startOut2 = (& net start AppIDSvc 2>&1) | Out-String
+        $bounceOut = "stop=$stopOut`nstart=$startOut2"
+    }
+    catch { $bounceOut = "bounce error: $_" }
+
     $effEnforced = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $true -ExpectedMode 'Enabled'
     [void](Save-EvidenceText -FileName 'policy-02-effective-enabled.xml' -Content $effEnforced)
+
+    # Deep OS diagnostics for Step 4
+    $appLockerDirFiles = if (Test-Path "$env:WINDIR\System32\AppLocker") {
+        (Get-ChildItem "$env:WINDIR\System32\AppLocker" -Recurse -Force -ErrorAction SilentlyContinue | Select-Object FullName, Length, LastWriteTimeUtc | Out-String)
+    } else { 'Directory missing' }
+    $srpDump = (& reg.exe query 'HKLM\SOFTWARE\Policies\Microsoft\Windows\SrpV2' /s 2>&1) | Out-String
+    $dg = try { Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName 'Win32_DeviceGuard' -ErrorAction SilentlyContinue | Format-List | Out-String } catch { "DG err: $_" }
+    $gpOps = try { Get-WinEvent -LogName 'Microsoft-Windows-GroupPolicy/Operational' -MaxEvents 40 -ErrorAction SilentlyContinue | Where-Object { $_.Id -in @(4000,4001,4016,5016,6016,7016,8000,8001) -or $_.Message -match 'AppLocker|SrpV2|AppID' } | Select-Object Id, TimeCreated, Message | Format-List | Out-String } catch { "GP err: $_" }
+    $sysEv = try { Get-WinEvent -LogName 'System' -MaxEvents 80 -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'AppID|applocker' } | Select-Object Id, TimeCreated, ProviderName, Message | Format-List | Out-String } catch { "Sys err: $_" }
+    $allAppLockerLogs = (Get-WinEvent -ListLog '*AppLocker*','*AppID*','*CodeIntegrity*' -ErrorAction SilentlyContinue | Select-Object LogName, IsEnabled, RecordCount, LogMode | Format-Table -AutoSize | Out-String)
+
+    [void](Save-EvidenceText -FileName 'step04-diagnostics.txt' -Content @"
+--- gpupdate Enabled ---
+$gpEnfOut
+--- AppIDSvc bounce ---
+$bounceOut
+--- System32\AppLocker files ---
+$appLockerDirFiles
+--- SrpV2 registry dump ---
+$srpDump
+--- DeviceGuard ---
+$dg
+--- AppLocker/AppID/CI Event Log status ---
+$allAppLockerLogs
+--- GroupPolicy events ---
+$gpOps
+--- System AppID/AppLocker events ---
+$sysEv
+"@)
 
     $ev8001 = Wait-AppLockerEvent -EventId 8001 -SinceUtc $tApplyEnforced
     if ($ev8001) { [void](Save-EvidenceJson -FileName 'step04-event-8001-policy-applied.json' -Data $ev8001) }
