@@ -1,0 +1,111 @@
+# BPE Stage 1 — AppLocker Feasibility & Live Enforcement Proof
+# Runs ONLY on disposable GitHub Actions Windows Server VMs (windows-2025).
+# DO NOT run on personal or production machines.
+
+name: BPE Stage 1 — AppLocker Enforcement Proof
+
+on:
+  push:
+    branches:
+      - bpe-stage1-applocker-proof
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bpe-stage1-applocker-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  applocker-enforcement-proof:
+    name: AppLocker Enforcement Proof (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 20
+
+    env:
+      BOUNDLESS_DISPOSABLE_VM_CONFIRMED: '1'
+      BOUNDLESS_ALLOW_LIVE_VM_TESTS: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify disposable VM runner preconditions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance Win32_OperatingSystem
+          $reg = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+          Write-Host "Runner Image: $env:ImageOS $env:ImageVersion"
+          Write-Host "OS: $($os.Caption) Build $($os.BuildNumber) EditionID=$($reg.EditionID)"
+          Write-Host "User: $env:USERNAME | Elevated Admin: $isAdmin"
+
+          if (-not $isAdmin) { throw 'Administrator privileges required.' }
+          if (-not (Get-Service -Name AppIDSvc -ErrorAction SilentlyContinue)) { throw 'AppIDSvc service missing.' }
+
+          & powershell.exe -NoProfile -NonInteractive -Command "Import-Module AppLocker -ErrorAction Stop; Write-Host 'Windows PowerShell 5.1 AppLocker module loaded.'"
+          if ($LASTEXITCODE -ne 0) { throw 'AppLocker module unavailable in Windows PowerShell 5.1.' }
+
+      - name: Build Stage 1 launcher harness
+        run: dotnet build prototypes/BpeStage1.AppLockerProof/BpeStage1.AppLockerProof.csproj -c Release --nologo
+
+      - name: Run 12-step AppLocker enforcement proof (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = Join-Path $env:GITHUB_WORKSPACE 'prototypes\BpeStage1.AppLockerProof\Run-AppLockerStage1Proof.ps1'
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Independent OS teardown verification
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $leaks = [System.Collections.Generic.List[string]]::new()
+
+          $remainingUsers = @(Get-LocalUser | Where-Object { $_.Name -like 'bpe_stage1*' })
+          if ($remainingUsers.Count -gt 0) {
+            foreach ($u in $remainingUsers) {
+              $leaks.Add("Leftover local user: $($u.Name)")
+              Remove-LocalUser -Name $u.Name -ErrorAction SilentlyContinue
+            }
+          }
+
+          foreach ($scope in @('Local', 'Effective')) {
+            $xml = (& powershell.exe -NoProfile -NonInteractive -Command "Import-Module AppLocker -ErrorAction Stop; Get-AppLockerPolicy -$scope -Xml" 2>&1) | Out-String
+            if ($xml -match 'Boundless|BpeStage1|d1111111-2222-4333-8444-555555555555') {
+              $leaks.Add("Leftover Boundless/BpeStage1 reference in AppLocker $scope policy.")
+            }
+          }
+
+          if (Test-Path 'C:\BpeStage1Proof\bin') {
+            $leaks.Add('Leftover C:\BpeStage1Proof\bin directory.')
+          }
+
+          if ($leaks.Count -gt 0) {
+            throw ("Teardown audit failed: " + ($leaks -join '; '))
+          }
+          Write-Host 'Independent OS teardown audit passed: zero leftover Boundless rules, test users, or target binaries.'
+
+      - name: Upload Stage 1 evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bpe-stage1-applocker-evidence-${{ github.run_number }}
+          path: C:\BpeStage1Proof\evidence\
+          retention-days: 90
+          if-no-files-found: warn
