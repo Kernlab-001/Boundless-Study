@@ -497,54 +497,13 @@ try {
 
     Record-Step '1' 'PASS' "$($os.Caption) (EditionID=$($reg.EditionID), Build=$($os.BuildNumber)); initial snapshots captured."
 
-    # ── STEP 2: Services, event log, users, binaries, hashes, harness ──
-    Write-Step '2' 'AppIDSvc, seclogon, Event Log, disposable users, targets & Authenticode hashes'
+    # ── STEP 2: Event Log, users, binaries, hashes, SrpV2 baseline, then drivers/services ──
+    Write-Step '2' 'Event Log, disposable users, targets, Authenticode hashes, SrpV2 baseline & AppID activation'
 
-    $appIdQc = (& sc.exe qc AppIDSvc 2>&1) | Out-String
-    $appIdSvc = Get-Service -Name AppIDSvc
-    if ($appIdSvc.Status -ne 'Running') {
-        $startOut = (& net start AppIDSvc 2>&1) | Out-String
-        if ($LASTEXITCODE -notin @(0, 2)) {
-            Write-Warning "Initial net start AppIDSvc returned ${LASTEXITCODE}: $startOut ; trying sc.exe config AppIDSvc start= auto"
-            $autoCfg = (& sc.exe config AppIDSvc start= auto 2>&1) | Out-String
-            $startOut = (& net start AppIDSvc 2>&1) | Out-String
-            if ($LASTEXITCODE -notin @(0, 2)) {
-                throw "Failed to start AppIDSvc (config: $autoCfg | start: $startOut | qc: $appIdQc)"
-            }
-        }
-        $appIdSvc.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
-        $appIdSvc.Refresh()
-    }
-    if ($appIdSvc.Status -ne 'Running') { throw "AppIDSvc not running: $($appIdSvc.Status)" }
-
-    # Ensure seclogon is running for CreateProcessWithLogonW
-    $secSvc = Get-Service -Name seclogon -ErrorAction SilentlyContinue
-    if ($secSvc -and $secSvc.Status -ne 'Running') {
-        $secLogonStart = (& net start seclogon 2>&1) | Out-String
-        if ($LASTEXITCODE -notin @(0, 2)) {
-            [void](& sc.exe config seclogon start= demand 2>&1)
-            $secLogonStart = (& net start seclogon 2>&1) | Out-String
-            if ($LASTEXITCODE -notin @(0, 2)) { Write-Warning "seclogon start returned ${LASTEXITCODE}: $secLogonStart" }
-        }
-        $secSvc.Refresh()
-    }
-
-    # Enable & size AppLocker EXE/DLL event log
+    # Enable & size AppLocker EXE/DLL and AppID Operational event logs FIRST
     $wevtOut = (& wevtutil sl 'Microsoft-Windows-AppLocker/EXE and DLL' /e:true /ms:16777216 2>&1) | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "wevtutil sl failed: $wevtOut" }
-
-    $appIdDrv = (& sc.exe query appid 2>&1) | Out-String
-    $fltmcOut = (& fltmc.exe 2>&1) | Out-String
-
-    [void](Save-EvidenceText -FileName 'services-status.txt' -Content @"
-AppIDSvc Status: $($appIdSvc.Status) (StartType: $($appIdSvc.StartType))
-seclogon Status: $(if ($secSvc) { "$($secSvc.Status) (StartType: $($secSvc.StartType))" } else { 'N/A' })
-wevtutil sl output: $wevtOut
---- sc.exe query appid ---
-$appIdDrv
---- fltmc.exe ---
-$fltmcOut
-"@)
+    $wevtAppIdOut = (& wevtutil sl 'Microsoft-Windows-AppID/Operational' /e:true /ms:16777216 2>&1) | Out-String
 
     # Create disposable non-admin local users
     $secPwd = ConvertTo-SecureString $script:TestPassword -AsPlainText -Force
@@ -640,12 +599,75 @@ $fltmcOut
         criticalExesChecked = @($script:CriticalExes)
     }))
 
-    # Apply pre-existing synthetic admin baseline policy BEFORE Boundless begins
+    # Apply pre-existing synthetic admin baseline policy + gpupdate BEFORE starting AppIDSvc/applockerfltr
+    # so SrpV2\Exe is populated when AppIDSvc initializes.
     $preAdminXml = Build-AppLockerPolicyXml -EnforcementMode 'AuditOnly' -IncludeBoundlessDeny $false -IncludeExternalAdmin $false
     $preAdminPath = Save-EvidenceText -FileName 'policy-00b-pre-admin-baseline.xml' -Content $preAdminXml
     Set-AppLockerPolicy -XmlPolicy $preAdminPath
+    $gpPreOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
 
-    Record-Step '2' 'PASS' "AppIDSvc Running; users $($script:TestUser1) ($($script:TestUser1Sid)) & $($script:TestUser2) ($($script:TestUser2Sid)) created; distinct PE hashes captured."
+    # Explicitly start applockerfltr filter driver and AppIDSvc service
+    $fltrStartOut = (& sc.exe start applockerfltr 2>&1) | Out-String
+    if ($LASTEXITCODE -notin @(0, 1056)) {
+        $fltmcLoadOut = (& fltmc.exe load applockerfltr 2>&1) | Out-String
+        $fltrStartOut += "`nfltmc load applockerfltr: $fltmcLoadOut"
+    }
+
+    $appIdQc = (& sc.exe qc AppIDSvc 2>&1) | Out-String
+    $appIdSvc = Get-Service -Name AppIDSvc
+    if ($appIdSvc.Status -ne 'Running') {
+        $startOut = (& net start AppIDSvc 2>&1) | Out-String
+        if ($LASTEXITCODE -notin @(0, 2)) {
+            [void](& sc.exe config AppIDSvc start= auto 2>&1)
+            $startOut = (& net start AppIDSvc 2>&1) | Out-String
+            if ($LASTEXITCODE -notin @(0, 2)) {
+                throw "Failed to start AppIDSvc ($startOut | qc: $appIdQc)"
+            }
+        }
+        $appIdSvc.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
+        $appIdSvc.Refresh()
+    }
+    if ($appIdSvc.Status -ne 'Running') { throw "AppIDSvc not running: $($appIdSvc.Status)" }
+
+    $appidtelOut = ''
+    if (Test-Path "$env:WINDIR\System32\appidtel.exe") {
+        $appidtelOut = (& "$env:WINDIR\System32\appidtel.exe" start 2>&1) | Out-String
+    }
+
+    $secSvc = Get-Service -Name seclogon -ErrorAction SilentlyContinue
+    if ($secSvc -and $secSvc.Status -ne 'Running') {
+        $secLogonStart = (& net start seclogon 2>&1) | Out-String
+        if ($LASTEXITCODE -notin @(0, 2)) {
+            [void](& sc.exe config seclogon start= demand 2>&1)
+            $secLogonStart = (& net start seclogon 2>&1) | Out-String
+            if ($LASTEXITCODE -notin @(0, 2)) { Write-Warning "seclogon start returned ${LASTEXITCODE}: $secLogonStart" }
+        }
+        $secSvc.Refresh()
+    }
+
+    $appIdDrv = (& sc.exe query appid 2>&1) | Out-String
+    $fltrDrv  = (& sc.exe query applockerfltr 2>&1) | Out-String
+    $fltrQc   = (& sc.exe qc applockerfltr 2>&1) | Out-String
+    $fltmcOut = (& fltmc.exe 2>&1) | Out-String
+
+    [void](Save-EvidenceText -FileName 'services-status.txt' -Content @"
+AppIDSvc Status: $($appIdSvc.Status) (StartType: $($appIdSvc.StartType))
+seclogon Status: $(if ($secSvc) { "$($secSvc.Status) (StartType: $($secSvc.StartType))" } else { 'N/A' })
+wevtutil AppLocker: $wevtOut | AppID: $wevtAppIdOut
+gpupdate pre-admin: $gpPreOut
+applockerfltr start attempt: $fltrStartOut
+appidtel start output: $appidtelOut
+--- sc.exe query appid ---
+$appIdDrv
+--- sc.exe query applockerfltr ---
+$fltrDrv
+--- sc.exe qc applockerfltr ---
+$fltrQc
+--- fltmc.exe ---
+$fltmcOut
+"@)
+
+    Record-Step '2' 'PASS' "AppIDSvc Running; applockerfltr started/queried; users $($script:TestUser1) ($($script:TestUser1Sid)) & $($script:TestUser2) ($($script:TestUser2Sid)) created; distinct PE hashes captured."
 
     # ── STEP 3: AuditOnly policy + Event 8003 ──
     Write-Step '3' 'AuditOnly policy + Event 8003 verification'
@@ -664,7 +686,9 @@ $fltmcOut
     $fltrQuery = (& sc.exe query applockerfltr 2>&1) | Out-String
     $fltmcAfter = (& fltmc.exe 2>&1) | Out-String
     $srpV2Keys = if (Test-Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2') {
-        (Get-ChildItem -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2' -Recurse | Select-Object -ExpandProperty PSPath) -join "`n"
+        $exeProps = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2\Exe' -ErrorAction SilentlyContinue | Out-String)
+        $subKeys = (Get-ChildItem -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2' -Recurse | Select-Object -ExpandProperty PSPath) -join "`n"
+        "Exe properties:`n$exeProps`nSubkeys:`n$subKeys"
     } else { 'SrpV2 key missing' }
     [void](Save-EvidenceText -FileName 'step03-diagnostics.txt' -Content @"
 --- gpupdate ---
@@ -1017,7 +1041,7 @@ catch {
 finally {
     Write-Host '[TEARDOWN] Executing guaranteed cleanup...'
 
-    # Always export AppLocker events (even on failure) for post-mortem diagnostics
+    # Always export AppLocker and AppID events (even on failure) for post-mortem diagnostics
     try {
         $evtxPath = Join-Path $script:EvidenceDir 'applocker-exe-dll.evtx'
         if (Test-Path $evtxPath) { Remove-Item $evtxPath -Force }
@@ -1026,6 +1050,11 @@ finally {
             Select-Object Id, @{N='TimeUtc';E={$_.TimeCreated.ToUniversalTime().ToString('o')}}, @{N='HeaderSid';E={if ($_.UserId) {$_.UserId.Value} else {$null}}}, LevelDisplayName, Message, @{N='Xml';E={$_.ToXml()}}
         if ($debugEv) {
             [void](Save-EvidenceJson -FileName 'applocker-events.json' -Data @($debugEv))
+        }
+        $appIdEv = Get-WinEvent -LogName 'Microsoft-Windows-AppID/Operational' -MaxEvents 50 -ErrorAction SilentlyContinue |
+            Select-Object Id, @{N='TimeUtc';E={$_.TimeCreated.ToUniversalTime().ToString('o')}}, LevelDisplayName, Message
+        if ($appIdEv) {
+            [void](Save-EvidenceJson -FileName 'appid-events.json' -Data @($appIdEv))
         }
     }
     catch {
