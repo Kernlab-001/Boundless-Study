@@ -384,16 +384,19 @@ function Wait-AppLockerEvent {
 
         if ($events) {
             foreach ($ev in $events) {
-                $sidMatch = ($null -eq $ExpectedUserSid) -or ($ev.UserId -and $ev.UserId.Value -eq $ExpectedUserSid)
-                $msgMatch = ($null -eq $TargetExeName) -or ($ev.Message -match [regex]::Escape($TargetExeName))
+                $rawXml = $ev.ToXml()
+                $headerSid = if ($ev.UserId) { $ev.UserId.Value } else { $null }
+                $sidMatch = ($null -eq $ExpectedUserSid) -or ($headerSid -eq $ExpectedUserSid) -or ($rawXml -match [regex]::Escape($ExpectedUserSid))
+                $msgMatch = ($null -eq $TargetExeName) -or ($ev.Message -match [regex]::Escape($TargetExeName)) -or ($rawXml -match [regex]::Escape($TargetExeName))
                 if ($sidMatch -and $msgMatch) {
                     return @{
                         id          = $ev.Id
                         timeUtc     = $ev.TimeCreated.ToUniversalTime().ToString('o')
-                        userSid     = if ($ev.UserId) { $ev.UserId.Value } else { $null }
+                        headerSid   = $headerSid
                         provider    = $ev.ProviderName
                         level       = $ev.LevelDisplayName
                         message     = $ev.Message
+                        xml         = $rawXml
                     }
                 }
             }
@@ -530,10 +533,17 @@ try {
     $wevtOut = (& wevtutil sl 'Microsoft-Windows-AppLocker/EXE and DLL' /e:true /ms:16777216 2>&1) | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "wevtutil sl failed: $wevtOut" }
 
+    $appIdDrv = (& sc.exe query appid 2>&1) | Out-String
+    $fltmcOut = (& fltmc.exe 2>&1) | Out-String
+
     [void](Save-EvidenceText -FileName 'services-status.txt' -Content @"
 AppIDSvc Status: $($appIdSvc.Status) (StartType: $($appIdSvc.StartType))
 seclogon Status: $(if ($secSvc) { "$($secSvc.Status) (StartType: $($secSvc.StartType))" } else { 'N/A' })
 wevtutil sl output: $wevtOut
+--- sc.exe query appid ---
+$appIdDrv
+--- fltmc.exe ---
+$fltmcOut
 "@)
 
     # Create disposable non-admin local users
@@ -983,6 +993,21 @@ catch {
 }
 finally {
     Write-Host '[TEARDOWN] Executing guaranteed cleanup...'
+
+    # Always export AppLocker events (even on failure) for post-mortem diagnostics
+    try {
+        $evtxPath = Join-Path $script:EvidenceDir 'applocker-exe-dll.evtx'
+        if (Test-Path $evtxPath) { Remove-Item $evtxPath -Force }
+        & wevtutil epl 'Microsoft-Windows-AppLocker/EXE and DLL' $evtxPath 2>$null
+        $debugEv = Get-WinEvent -LogName 'Microsoft-Windows-AppLocker/EXE and DLL' -MaxEvents 100 -ErrorAction SilentlyContinue |
+            Select-Object Id, @{N='TimeUtc';E={$_.TimeCreated.ToUniversalTime().ToString('o')}}, @{N='HeaderSid';E={if ($_.UserId) {$_.UserId.Value} else {$null}}}, LevelDisplayName, Message, @{N='Xml';E={$_.ToXml()}}
+        if ($debugEv) {
+            [void](Save-EvidenceJson -FileName 'applocker-events.json' -Data @($debugEv))
+        }
+    }
+    catch {
+        Write-Warning "Event export in finally failed: $_"
+    }
 
     # Restore initial policy even on failure
     try {
