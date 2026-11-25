@@ -230,34 +230,43 @@ function Initialize-DynamicRunnerPaths {
 function Invoke-AppLockerPolicySync {
     param([switch]$RestartServiceAndFilter)
 
-    $gpOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $gpOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
 
-    # Trigger Microsoft's PolicyConverter scheduled task (runs as SYSTEM) to compile SrpV2 XML into binary policy
-    $convOut = (& schtasks.exe /run /tn "\Microsoft\Windows\AppID\PolicyConverter" 2>&1) | Out-String
-    $deadline = (Get-Date).AddSeconds(12)
-    while ((Get-Date) -lt $deadline) {
-        $q = (& schtasks.exe /query /tn "\Microsoft\Windows\AppID\PolicyConverter" /fo LIST 2>&1) | Out-String
-        if ($q -notmatch 'Status:\s+Running') { break }
-        Start-Sleep -Milliseconds 300
+        # Ensure Microsoft's PolicyConverter scheduled task is enabled on hardened CI images
+        $enableOut = (& schtasks.exe /change /tn "\Microsoft\Windows\AppID\PolicyConverter" /enable 2>&1) | Out-String
+        $convOut = (& schtasks.exe /run /tn "\Microsoft\Windows\AppID\PolicyConverter" 2>&1) | Out-String
+        $deadline = (Get-Date).AddSeconds(12)
+        while ((Get-Date) -lt $deadline) {
+            $q = (& schtasks.exe /query /tn "\Microsoft\Windows\AppID\PolicyConverter" /fo LIST 2>&1) | Out-String
+            if ($q -notmatch 'Status:\s+Running') { break }
+            Start-Sleep -Milliseconds 300
+        }
+
+        if ($RestartServiceAndFilter) {
+            # Stopping AppIDSvc stops dependent applockerfltr; starting applockerfltr brings up BOTH in dependency order.
+            [void](& net stop AppIDSvc /y 2>&1)
+            Start-Sleep -Milliseconds 500
+        }
+
+        $fltrStart = (& sc.exe start applockerfltr 2>&1) | Out-String
+        $svc = Get-Service -Name AppIDSvc
+        if ($svc.Status -ne 'Running') {
+            [void](& net start AppIDSvc 2>&1)
+            $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
+        }
+
+        return [ordered]@{
+            gpupdate        = $gpOut.Trim()
+            enableTask      = $enableOut.Trim()
+            policyConverter = $convOut.Trim()
+            applockerfltr   = $fltrStart.Trim()
+        }
     }
-
-    if ($RestartServiceAndFilter) {
-        # Note: stopping AppIDSvc stops dependent applockerfltr; starting applockerfltr brings up BOTH in dependency order.
-        [void](& net stop AppIDSvc /y 2>&1)
-        Start-Sleep -Milliseconds 500
-    }
-
-    $fltrStart = (& sc.exe start applockerfltr 2>&1) | Out-String
-    $svc = Get-Service -Name AppIDSvc
-    if ($svc.Status -ne 'Running') {
-        [void](& net start AppIDSvc 2>&1)
-        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
-    }
-
-    return [ordered]@{
-        gpupdate        = $gpOut.Trim()
-        policyConverter = $convOut.Trim()
-        applockerfltr   = $fltrStart.Trim()
+    finally {
+        $ErrorActionPreference = $prevPref
     }
 }
 
