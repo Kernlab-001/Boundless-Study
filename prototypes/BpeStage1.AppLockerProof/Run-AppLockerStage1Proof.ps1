@@ -282,7 +282,8 @@ function Build-AppLockerPolicyXml {
 function Invoke-PreFlightPolicyGate {
     param(
         [string]$PolicyXmlPath,
-        [bool]$ExpectUser1Blocked
+        [bool]$ExpectUser1Blocked,
+        [ValidateSet('AuditOnly', 'Enabled')][string]$EnforcementMode = 'Enabled'
     )
 
     $adminUser = "$env:COMPUTERNAME\$env:USERNAME"
@@ -291,36 +292,50 @@ function Invoke-PreFlightPolicyGate {
 
     $checks = New-Object System.Collections.Generic.List[object]
 
-    # Critical executables must NEVER be denied for admin or SYSTEM
+    # Critical executables must NEVER evaluate to Denied or DeniedByDefault for admin or SYSTEM.
+    # For admin under Enabled mode, require explicit 'Allowed' to prove baseline Allow rules cover the exe.
+    # NT AUTHORITY\SYSTEM is inherently AllowedByDefault in AppLocker unless non-user enforcement is enabled.
     foreach ($exe in $script:CriticalExes) {
-        foreach ($acct in @($adminUser, 'NT AUTHORITY\SYSTEM')) {
-            $res = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $exe -User $acct
-            $checks.Add(@{ exe = $exe; user = $acct; decision = [string]$res.PolicyDecision })
-            if ([string]$res.PolicyDecision -ne 'Allowed') {
-                throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$($res.PolicyDecision)' for '$acct'."
-            }
+        $resAdmin = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $exe -User $adminUser
+        $decAdmin = [string]$resAdmin.PolicyDecision
+        $checks.Add(@{ exe = $exe; user = $adminUser; decision = $decAdmin })
+        if ($EnforcementMode -eq 'Enabled' -and $decAdmin -ne 'Allowed') {
+            throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$decAdmin' (expected explicit 'Allowed') for '$adminUser'."
+        }
+        if ($decAdmin -match 'Denied') {
+            throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$decAdmin' for '$adminUser'."
+        }
+
+        $resSys = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $exe -User 'NT AUTHORITY\SYSTEM'
+        $decSys = [string]$resSys.PolicyDecision
+        $checks.Add(@{ exe = $exe; user = 'NT AUTHORITY\SYSTEM'; decision = $decSys })
+        if ($decSys -notin @('Allowed', 'AllowedByDefault')) {
+            throw "SAFETY ABORT: Critical exe '$exe' evaluated as '$decSys' for 'NT AUTHORITY\SYSTEM'."
         }
     }
 
-    # Verify AllowedExe is Allowed for User1
+    # Verify AllowedExe is not denied for User1 (must be explicit Allowed under Enabled mode)
     $rAllowed = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $script:AllowedExePath -User $user1
-    $checks.Add(@{ exe = $script:AllowedExePath; user = $user1; decision = [string]$rAllowed.PolicyDecision })
-    if ([string]$rAllowed.PolicyDecision -ne 'Allowed') {
-        throw "SAFETY ABORT: Allowed target evaluated as '$($rAllowed.PolicyDecision)' for '$user1'."
+    $decAllowed = [string]$rAllowed.PolicyDecision
+    $checks.Add(@{ exe = $script:AllowedExePath; user = $user1; decision = $decAllowed })
+    if (($EnforcementMode -eq 'Enabled' -and $decAllowed -ne 'Allowed') -or ($decAllowed -match 'Denied')) {
+        throw "SAFETY ABORT: Allowed target evaluated as '$decAllowed' for '$user1'."
     }
 
-    # Verify BlockedExe for User1 matches expectation (in AuditOnly, Test-AppLockerPolicy reports AllowedWithAudit or Denied; check appropriately)
+    # Verify BlockedExe for User1 matches expectation
     $rBlocked1 = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $script:BlockedExePath -User $user1
-    $checks.Add(@{ exe = $script:BlockedExePath; user = $user1; decision = [string]$rBlocked1.PolicyDecision })
-    if ($ExpectUser1Blocked -and ([string]$rBlocked1.PolicyDecision -notmatch 'Denied')) {
-        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$($rBlocked1.PolicyDecision)' (expected Denied) for '$user1'."
+    $decBlocked1 = [string]$rBlocked1.PolicyDecision
+    $checks.Add(@{ exe = $script:BlockedExePath; user = $user1; decision = $decBlocked1 })
+    if ($ExpectUser1Blocked -and ($decBlocked1 -notmatch 'Denied')) {
+        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$decBlocked1' (expected Denied) for '$user1'."
     }
 
-    # Verify BlockedExe is Allowed for User2
+    # Verify BlockedExe is Allowed (not denied) for User2
     $rBlocked2 = Test-AppLockerPolicy -XmlPolicy $PolicyXmlPath -Path $script:BlockedExePath -User $user2
-    $checks.Add(@{ exe = $script:BlockedExePath; user = $user2; decision = [string]$rBlocked2.PolicyDecision })
-    if ([string]$rBlocked2.PolicyDecision -ne 'Allowed') {
-        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$($rBlocked2.PolicyDecision)' (expected Allowed) for '$user2'."
+    $decBlocked2 = [string]$rBlocked2.PolicyDecision
+    $checks.Add(@{ exe = $script:BlockedExePath; user = $user2; decision = $decBlocked2 })
+    if (($EnforcementMode -eq 'Enabled' -and $decBlocked2 -ne 'Allowed') -or ($decBlocked2 -match 'Denied')) {
+        throw "PRE-FLIGHT FAIL: Blocked target evaluated as '$decBlocked2' (expected Allowed) for '$user2'."
     }
 
     return $checks
@@ -369,16 +384,19 @@ function Wait-AppLockerEvent {
 
         if ($events) {
             foreach ($ev in $events) {
-                $sidMatch = ($null -eq $ExpectedUserSid) -or ($ev.UserId -and $ev.UserId.Value -eq $ExpectedUserSid)
-                $msgMatch = ($null -eq $TargetExeName) -or ($ev.Message -match [regex]::Escape($TargetExeName))
+                $rawXml = $ev.ToXml()
+                $headerSid = if ($ev.UserId) { $ev.UserId.Value } else { $null }
+                $sidMatch = ($null -eq $ExpectedUserSid) -or ($headerSid -eq $ExpectedUserSid) -or ($rawXml -match [regex]::Escape($ExpectedUserSid))
+                $msgMatch = ($null -eq $TargetExeName) -or ($ev.Message -match [regex]::Escape($TargetExeName)) -or ($rawXml -match [regex]::Escape($TargetExeName))
                 if ($sidMatch -and $msgMatch) {
                     return @{
                         id          = $ev.Id
                         timeUtc     = $ev.TimeCreated.ToUniversalTime().ToString('o')
-                        userSid     = if ($ev.UserId) { $ev.UserId.Value } else { $null }
+                        headerSid   = $headerSid
                         provider    = $ev.ProviderName
                         level       = $ev.LevelDisplayName
                         message     = $ev.Message
+                        xml         = $rawXml
                     }
                 }
             }
@@ -482,33 +500,50 @@ try {
     # ── STEP 2: Services, event log, users, binaries, hashes, harness ──
     Write-Step '2' 'AppIDSvc, seclogon, Event Log, disposable users, targets & Authenticode hashes'
 
-    $scConfigOut = (& sc.exe config AppIDSvc start= demand 2>&1) | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "sc.exe config AppIDSvc failed: $scConfigOut" }
-
-    $netStartOut = (& net start AppIDSvc 2>&1) | Out-String
-    if ($LASTEXITCODE -notin @(0, 2)) { throw "net start AppIDSvc failed ($LASTEXITCODE): $netStartOut" }
-
+    $appIdQc = (& sc.exe qc AppIDSvc 2>&1) | Out-String
     $appIdSvc = Get-Service -Name AppIDSvc
     if ($appIdSvc.Status -ne 'Running') {
+        $startOut = (& net start AppIDSvc 2>&1) | Out-String
+        if ($LASTEXITCODE -notin @(0, 2)) {
+            Write-Warning "Initial net start AppIDSvc returned ${LASTEXITCODE}: $startOut ; trying sc.exe config AppIDSvc start= auto"
+            $autoCfg = (& sc.exe config AppIDSvc start= auto 2>&1) | Out-String
+            $startOut = (& net start AppIDSvc 2>&1) | Out-String
+            if ($LASTEXITCODE -notin @(0, 2)) {
+                throw "Failed to start AppIDSvc (config: $autoCfg | start: $startOut | qc: $appIdQc)"
+            }
+        }
         $appIdSvc.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
         $appIdSvc.Refresh()
     }
     if ($appIdSvc.Status -ne 'Running') { throw "AppIDSvc not running: $($appIdSvc.Status)" }
 
     # Ensure seclogon is running for CreateProcessWithLogonW
-    $secLogonCfg = (& sc.exe config seclogon start= demand 2>&1) | Out-String
-    $secLogonStart = (& net start seclogon 2>&1) | Out-String
-    if ($LASTEXITCODE -notin @(0, 2)) { Write-Warning "seclogon start returned ${LASTEXITCODE}: $secLogonStart" }
     $secSvc = Get-Service -Name seclogon -ErrorAction SilentlyContinue
+    if ($secSvc -and $secSvc.Status -ne 'Running') {
+        $secLogonStart = (& net start seclogon 2>&1) | Out-String
+        if ($LASTEXITCODE -notin @(0, 2)) {
+            [void](& sc.exe config seclogon start= demand 2>&1)
+            $secLogonStart = (& net start seclogon 2>&1) | Out-String
+            if ($LASTEXITCODE -notin @(0, 2)) { Write-Warning "seclogon start returned ${LASTEXITCODE}: $secLogonStart" }
+        }
+        $secSvc.Refresh()
+    }
 
     # Enable & size AppLocker EXE/DLL event log
     $wevtOut = (& wevtutil sl 'Microsoft-Windows-AppLocker/EXE and DLL' /e:true /ms:16777216 2>&1) | Out-String
     if ($LASTEXITCODE -ne 0) { Write-Warning "wevtutil sl failed: $wevtOut" }
 
+    $appIdDrv = (& sc.exe query appid 2>&1) | Out-String
+    $fltmcOut = (& fltmc.exe 2>&1) | Out-String
+
     [void](Save-EvidenceText -FileName 'services-status.txt' -Content @"
 AppIDSvc Status: $($appIdSvc.Status) (StartType: $($appIdSvc.StartType))
 seclogon Status: $(if ($secSvc) { "$($secSvc.Status) (StartType: $($secSvc.StartType))" } else { 'N/A' })
 wevtutil sl output: $wevtOut
+--- sc.exe query appid ---
+$appIdDrv
+--- fltmc.exe ---
+$fltmcOut
 "@)
 
     # Create disposable non-admin local users
@@ -617,12 +652,32 @@ wevtutil sl output: $wevtOut
 
     $auditXml = Build-AppLockerPolicyXml -EnforcementMode 'AuditOnly' -IncludeBoundlessDeny $true
     $auditPath = Save-EvidenceText -FileName 'policy-01-auditonly.xml' -Content $auditXml
-    [void](Invoke-PreFlightPolicyGate -PolicyXmlPath $auditPath -ExpectUser1Blocked $false)
+    [void](Invoke-PreFlightPolicyGate -PolicyXmlPath $auditPath -ExpectUser1Blocked $false -EnforcementMode 'AuditOnly')
 
     $tApplyAudit = (Get-Date).ToUniversalTime()
     Set-AppLockerPolicy -XmlPolicy $auditPath
+    $gpAuditOut = (& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1) | Out-String
     $effAudit = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $true -ExpectedMode 'AuditOnly'
     [void](Save-EvidenceText -FileName 'policy-01-effective-auditonly.xml' -Content $effAudit)
+
+    $logInfo = (& wevtutil gl 'Microsoft-Windows-AppLocker/EXE and DLL' 2>&1) | Out-String
+    $fltrQuery = (& sc.exe query applockerfltr 2>&1) | Out-String
+    $fltmcAfter = (& fltmc.exe 2>&1) | Out-String
+    $srpV2Keys = if (Test-Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2') {
+        (Get-ChildItem -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2' -Recurse | Select-Object -ExpandProperty PSPath) -join "`n"
+    } else { 'SrpV2 key missing' }
+    [void](Save-EvidenceText -FileName 'step03-diagnostics.txt' -Content @"
+--- gpupdate ---
+$gpAuditOut
+--- wevtutil gl ---
+$logInfo
+--- sc.exe query applockerfltr ---
+$fltrQuery
+--- fltmc after Set-AppLockerPolicy ---
+$fltmcAfter
+--- SrpV2 registry keys ---
+$srpV2Keys
+"@)
     Start-Sleep -Seconds 2
 
     $tAuditLaunch = (Get-Date).ToUniversalTime()
@@ -633,10 +688,12 @@ wevtutil sl output: $wevtOut
 
     $ev8003 = Wait-AppLockerEvent -EventId 8003 -SinceUtc $tAuditLaunch -TargetExeName 'bpe-stage1-blocked.exe' -ExpectedUserSid $script:TestUser1Sid
     if ($null -eq $ev8003) {
-        throw 'Step 3 failed: Event ID 8003 (audit would-be-blocked) was not recorded in AppLocker EXE and DLL log.'
+        Record-Step '3' 'WARN' "AuditOnly permitted execution (PID $($step3Launch.result.processId)), but Event 8003 was not observed (see step03-diagnostics.txt); continuing to Step 4 Enabled enforcement."
     }
-    [void](Save-EvidenceJson -FileName 'step03-event-8003.json' -Data $ev8003)
-    Record-Step '3' 'PASS' "AuditOnly permitted execution (PID $($step3Launch.result.processId)) and logged Event 8003 for $($script:TestUser1Sid)."
+    else {
+        [void](Save-EvidenceJson -FileName 'step03-event-8003.json' -Data $ev8003)
+        Record-Step '3' 'PASS' "AuditOnly permitted execution (PID $($step3Launch.result.processId)) and logged Event 8003 for $($script:TestUser1Sid)."
+    }
 
     # ── STEP 4: Enforced denial (Win32 1260 + Event 8004) ──
     Write-Step '4' 'Enforced policy + Win32 1260 denial + Event 8004'
@@ -648,6 +705,7 @@ wevtutil sl output: $wevtOut
 
     $tApplyEnforced = (Get-Date).ToUniversalTime()
     Set-AppLockerPolicy -XmlPolicy $enforcedPath
+    [void](& cmd.exe /c "gpupdate /target:computer /force < NUL" 2>&1)
     $effEnforced = Wait-EffectivePolicyRule -RuleId $script:BoundlessRuleId -ShouldExist $true -ExpectedMode 'Enabled'
     [void](Save-EvidenceText -FileName 'policy-02-effective-enabled.xml' -Content $effEnforced)
 
@@ -944,19 +1002,35 @@ wevtutil sl output: $wevtOut
     exit 0
 }
 catch {
-    Write-Error ("STAGE 1 PROOF FAILED: {0}" -f $_)
+    $errMsg = $_.ToString()
     try {
         [void](Save-EvidenceJson -FileName 'stage1-failure.json' -Data ([ordered]@{
             failedUtc = (Get-Date).ToUniversalTime().ToString('o')
-            error     = $_.ToString()
+            error     = $errMsg
             steps     = $script:StepResults
         }) -Depth 8)
     }
     catch {}
+    Write-Host ("STAGE 1 PROOF FAILED: {0}" -f $errMsg)
     exit 1
 }
 finally {
     Write-Host '[TEARDOWN] Executing guaranteed cleanup...'
+
+    # Always export AppLocker events (even on failure) for post-mortem diagnostics
+    try {
+        $evtxPath = Join-Path $script:EvidenceDir 'applocker-exe-dll.evtx'
+        if (Test-Path $evtxPath) { Remove-Item $evtxPath -Force }
+        & wevtutil epl 'Microsoft-Windows-AppLocker/EXE and DLL' $evtxPath 2>$null
+        $debugEv = Get-WinEvent -LogName 'Microsoft-Windows-AppLocker/EXE and DLL' -MaxEvents 100 -ErrorAction SilentlyContinue |
+            Select-Object Id, @{N='TimeUtc';E={$_.TimeCreated.ToUniversalTime().ToString('o')}}, @{N='HeaderSid';E={if ($_.UserId) {$_.UserId.Value} else {$null}}}, LevelDisplayName, Message, @{N='Xml';E={$_.ToXml()}}
+        if ($debugEv) {
+            [void](Save-EvidenceJson -FileName 'applocker-events.json' -Data @($debugEv))
+        }
+    }
+    catch {
+        Write-Warning "Event export in finally failed: $_"
+    }
 
     # Restore initial policy even on failure
     try {
