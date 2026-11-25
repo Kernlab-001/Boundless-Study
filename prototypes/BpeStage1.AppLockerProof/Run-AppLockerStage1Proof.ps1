@@ -482,24 +482,34 @@ try {
     # ── STEP 2: Services, event log, users, binaries, hashes, harness ──
     Write-Step '2' 'AppIDSvc, seclogon, Event Log, disposable users, targets & Authenticode hashes'
 
-    $scConfigOut = (& sc.exe config AppIDSvc start= demand 2>&1) | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "sc.exe config AppIDSvc failed: $scConfigOut" }
-
-    $netStartOut = (& net start AppIDSvc 2>&1) | Out-String
-    if ($LASTEXITCODE -notin @(0, 2)) { throw "net start AppIDSvc failed ($LASTEXITCODE): $netStartOut" }
-
+    $appIdQc = (& sc.exe qc AppIDSvc 2>&1) | Out-String
     $appIdSvc = Get-Service -Name AppIDSvc
     if ($appIdSvc.Status -ne 'Running') {
+        $startOut = (& net start AppIDSvc 2>&1) | Out-String
+        if ($LASTEXITCODE -notin @(0, 2)) {
+            Write-Warning "Initial net start AppIDSvc returned ${LASTEXITCODE}: $startOut ; trying sc.exe config AppIDSvc start= auto"
+            $autoCfg = (& sc.exe config AppIDSvc start= auto 2>&1) | Out-String
+            $startOut = (& net start AppIDSvc 2>&1) | Out-String
+            if ($LASTEXITCODE -notin @(0, 2)) {
+                throw "Failed to start AppIDSvc (config: $autoCfg | start: $startOut | qc: $appIdQc)"
+            }
+        }
         $appIdSvc.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
         $appIdSvc.Refresh()
     }
     if ($appIdSvc.Status -ne 'Running') { throw "AppIDSvc not running: $($appIdSvc.Status)" }
 
     # Ensure seclogon is running for CreateProcessWithLogonW
-    $secLogonCfg = (& sc.exe config seclogon start= demand 2>&1) | Out-String
-    $secLogonStart = (& net start seclogon 2>&1) | Out-String
-    if ($LASTEXITCODE -notin @(0, 2)) { Write-Warning "seclogon start returned ${LASTEXITCODE}: $secLogonStart" }
     $secSvc = Get-Service -Name seclogon -ErrorAction SilentlyContinue
+    if ($secSvc -and $secSvc.Status -ne 'Running') {
+        $secLogonStart = (& net start seclogon 2>&1) | Out-String
+        if ($LASTEXITCODE -notin @(0, 2)) {
+            [void](& sc.exe config seclogon start= demand 2>&1)
+            $secLogonStart = (& net start seclogon 2>&1) | Out-String
+            if ($LASTEXITCODE -notin @(0, 2)) { Write-Warning "seclogon start returned ${LASTEXITCODE}: $secLogonStart" }
+        }
+        $secSvc.Refresh()
+    }
 
     # Enable & size AppLocker EXE/DLL event log
     $wevtOut = (& wevtutil sl 'Microsoft-Windows-AppLocker/EXE and DLL' /e:true /ms:16777216 2>&1) | Out-String
@@ -944,15 +954,16 @@ wevtutil sl output: $wevtOut
     exit 0
 }
 catch {
-    Write-Error ("STAGE 1 PROOF FAILED: {0}" -f $_)
+    $errMsg = $_.ToString()
     try {
         [void](Save-EvidenceJson -FileName 'stage1-failure.json' -Data ([ordered]@{
             failedUtc = (Get-Date).ToUniversalTime().ToString('o')
-            error     = $_.ToString()
+            error     = $errMsg
             steps     = $script:StepResults
         }) -Depth 8)
     }
     catch {}
+    Write-Host ("STAGE 1 PROOF FAILED: {0}" -f $errMsg)
     exit 1
 }
 finally {
